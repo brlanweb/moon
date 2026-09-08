@@ -76,6 +76,8 @@ class AgentSession(models.Model, ModelMixin):
     detection_id = models.IntegerField(null=True)
     target = models.CharField(max_length=255, null=True)
     trigger_message = models.TextField(null=True)
+    # Docker 监控会话的不可变目标作用域；非 Docker 会话保持为空。
+    target_scope = models.TextField(null=True)
     model_name = models.CharField(max_length=100, null=True)
     max_loops = models.IntegerField(default=30)
     used_loops = models.IntegerField(default=0)

@@ -57,6 +57,7 @@ OUTPUT_LIMIT = int(getattr(settings, 'AI_OUTPUT_LIMIT', 20000))
 CONTEXT_BUDGET = int(getattr(settings, 'AI_CONTEXT_LIMIT', 1200000))
 # 兜底的条数上限，防止极端情况下消息条数过多拖慢序列化
 HISTORY_LIMIT = int(getattr(settings, 'AI_HISTORY_LIMIT', 2000))
+DOCKER_WRITE_TOOLS = {'docker_target_restart', 'docker_target_recover'}
 
 
 def _tool_slug(text):
@@ -264,6 +265,51 @@ def _make_ssh_tool(runner):
     return Tool(ssh_exec, takes_ctx=True, sequential=True)
 
 
+def _make_docker_tools(runner):
+    """只暴露绑定到会话作用域的 Docker 工具，不接受任何目标标识。"""
+    from apps.ai.docker_tools import DockerTargetOperator
+
+    def operator(ctx):
+        return DockerTargetOperator(ctx.deps.session.host, ctx.deps.session.target_scope)
+
+    def record(ctx, name, output, write=False):
+        ctx.deps.runner.record('tool', name, extra={'scoped': True, 'write': write})
+        ctx.deps.runner.record('tool_result', output)
+        return output
+
+    def docker_target_status(ctx: RunContext[Deps]) -> str:
+        """读取监控目标的容器运行状态、健康状态和副本信息。"""
+        return record(ctx, 'docker_target_status', operator(ctx).status())
+
+    def docker_target_logs(ctx: RunContext[Deps]) -> str:
+        """读取监控目标各容器最近200行日志，输出最多20KiB。"""
+        return record(ctx, 'docker_target_logs', operator(ctx).logs())
+
+    def docker_target_restart(ctx: RunContext[Deps]) -> str:
+        """只重启监控目标中当前状态异常的现存容器。"""
+        return record(ctx, 'docker_target_restart', operator(ctx).restart(), True)
+
+    def docker_target_recover(ctx: RunContext[Deps]) -> str:
+        """在配置哈希一致时，把Compose目标恢复到保存的副本基线。"""
+        return record(ctx, 'docker_target_recover', operator(ctx).recover(), True)
+
+    def host_diagnostics(ctx: RunContext[Deps], kind: str) -> str:
+        """读取固定宿主机指标；kind仅支持disk、inode、memory、load。"""
+        return record(ctx, 'host_diagnostics', operator(ctx).host_diagnostics(kind))
+
+    tools = [
+        Tool(docker_target_status, takes_ctx=True),
+        Tool(docker_target_logs, takes_ctx=True),
+        Tool(host_diagnostics, takes_ctx=True),
+    ]
+    if getattr(runner.session, 'mode', None) == 'repair':
+        tools.extend([
+            Tool(docker_target_restart, takes_ctx=True, sequential=True),
+            Tool(docker_target_recover, takes_ctx=True, sequential=True),
+        ])
+    return tools
+
+
 def _make_skill_tool(runner):
     def load_skill(ctx: RunContext[Deps], name: str) -> str:
         """按名称加载一份运维技能（操作手册）的完整内容。"""
@@ -342,16 +388,21 @@ def build_agent(runner, instructions, with_ssh=True, with_tools=True):
     """
     model, _ = _build_model(runner.session)
     tools = []
+    is_docker_scope = bool(getattr(runner.session, 'target_scope', None))
     if with_tools:
-        if with_ssh:
-            tools.append(_make_ssh_tool(runner))
-        tools.append(_make_skill_tool(runner))
-        tools.extend(_make_mcp_tools(runner))
+        if is_docker_scope:
+            tools.extend(_make_docker_tools(runner))
+        else:
+            if with_ssh:
+                tools.append(_make_ssh_tool(runner))
+            tools.append(_make_skill_tool(runner))
+            tools.extend(_make_mcp_tools(runner))
+    final_instructions = instructions if is_docker_scope else instructions + _skill_hint()
     return _PydanticAgent(
         model,
         deps_type=Deps,
         output_type=[str, DeferredToolRequests],
-        instructions=instructions + _skill_hint(),
+        instructions=final_instructions,
         tools=tools,
         model_settings=ModelSettings(parallel_tool_calls=True),
         retries=2,
@@ -399,7 +450,7 @@ async def _drive(agent, runner, deps, prompt, history, deferred, max_loops):
                 async with node.stream(run.ctx) as handle_stream:
                     async for event in handle_stream:
                         if isinstance(event, FunctionToolCallEvent) \
-                                and event.part.tool_name == 'ssh_exec':
+                                and event.part.tool_name in ({'ssh_exec'} | DOCKER_WRITE_TOOLS):
                             executed = True
                 # 修复模式：每批命令执行完立即复检，恢复了就不再继续消耗轮次
                 if executed and runner.verifier:
@@ -650,12 +701,17 @@ def run_session(session, verifier=None):
     无人值守：高危命令不挂起等待确认，直接跳过并要求模型改用安全方案；
     诊断模式额外禁止一切写操作。全过程仍写入 AgentRecord 便于事后排查。
     """
-    from apps.ai.agent import DIAGNOSE_PROMPT, REPAIR_PROMPT
+    from apps.ai.agent import (
+        DIAGNOSE_PROMPT, REPAIR_PROMPT, DOCKER_DIAGNOSE_PROMPT, DOCKER_REPAIR_PROMPT)
     from apps.ai.client import AIError
     runner = AgentRunner(session, verifier=verifier, emit=False, unattended=True)
     context = _session_context(session)
     runner.record('context', context, emit=False)
-    instructions = DIAGNOSE_PROMPT if session.mode == 'diagnose' else REPAIR_PROMPT
+    if session.target_scope:
+        instructions = (DOCKER_DIAGNOSE_PROMPT if session.mode == 'diagnose'
+                        else DOCKER_REPAIR_PROMPT)
+    else:
+        instructions = DIAGNOSE_PROMPT if session.mode == 'diagnose' else REPAIR_PROMPT
     max_loops = max(1, int(session.max_loops or 15))
     deps = Deps(session=session, runner=runner, mode=session.mode, unattended=True)
 
