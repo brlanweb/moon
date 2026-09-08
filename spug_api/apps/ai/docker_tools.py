@@ -129,8 +129,8 @@ class DockerTargetOperator:
         expected = int(self.scope['expected_replicas'])
         if len(containers) >= expected:
             return '目标服务副本未缺失，无需执行恢复命令。'
-        hashes = {item.get('config_hash') for item in containers if item.get('config_hash')}
-        if hashes and hashes != {self.scope['config_hash']}:
+        container_hashes = [item.get('config_hash') or '' for item in containers]
+        if any(value != self.scope['config_hash'] for value in container_hashes):
             return '运行中副本配置哈希与监控基线不一致，禁止自动恢复。'
         try:
             current = read_service_hash(

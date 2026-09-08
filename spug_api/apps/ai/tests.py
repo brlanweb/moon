@@ -131,6 +131,30 @@ class DockerTargetOperatorTests(SimpleTestCase):
         self.assertIn('--scale api=2 api', command)
 
     @patch('apps.ai.docker_tools._exec')
+    @patch('apps.ai.docker_tools.read_service_hash', return_value='hash-1')
+    @patch('apps.ai.docker_tools.discover_all')
+    def test_recover_rejects_existing_replica_without_config_hash(
+            self, discover, _hash, execute):
+        discover.return_value = {
+            'projects': [{
+                'name': 'demo', 'workdir': '/opt/demo',
+                'config_file': '/opt/demo/compose.yml',
+                'config_files': ['/opt/demo/compose.yml'],
+                'containers': [{
+                    'name': 'demo-api-1', 'service': 'api', 'state': 'running',
+                    'health': 'healthy', 'config_hash': '',
+                }],
+            }],
+            'standalone': [],
+        }
+        operator = DockerTargetOperator(object(), self.SCOPE)
+
+        result = operator.recover()
+
+        self.assertIn('配置哈希', result)
+        execute.assert_not_called()
+
+    @patch('apps.ai.docker_tools._exec')
     @patch('apps.ai.docker_tools.read_service_hash', return_value='changed')
     @patch('apps.ai.docker_tools.discover_all')
     def test_recover_rejects_compose_config_drift(self, discover, _hash, execute):

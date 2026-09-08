@@ -44,7 +44,7 @@ def _save_policy(redis, key, data):
     redis.setex(key, POLICY_TTL, json.dumps(data, ensure_ascii=False))
 
 
-def may_start_repair(redis, key, details, now=None):
+def may_start_repair(redis, key, details, now=None, observe=True):
     now = int(now or time.time())
     data = _load_policy(redis, key)
     attempts = [int(value) for value in data['attempts'] if int(value) > now - POLICY_TTL]
@@ -62,6 +62,9 @@ def may_start_repair(redis, key, details, now=None):
     if int((details or {}).get('verification_timeout') or 0) > 1800:
         _save_policy(redis, key, data)
         return False, '目标恢复验证预计超过30分钟，已转人工处理'
+    if not observe:
+        _save_policy(redis, key, data)
+        return True, ''
 
     restart_loop = False
     samples = data['samples']
@@ -157,7 +160,8 @@ def validate_and_normalize_scope(host, raw_scope):
     if not service or not containers:
         raise DockerClientError('Compose服务不存在，请刷新后重试')
 
-    hashes = {item.get('config_hash') for item in containers if item.get('config_hash')}
+    container_hashes = [item.get('config_hash') or '' for item in containers]
+    hashes = {value for value in container_hashes if value}
     config_hash = ''
     can_recover = False
     if len(hashes) > 1:
@@ -166,7 +170,7 @@ def validate_and_normalize_scope(host, raw_scope):
         current_hash = read_service_hash(host, SimpleNamespace(**project), service)
     except Exception:
         current_hash = ''
-    if current_hash and hashes:
+    if current_hash and hashes and all(container_hashes):
         if current_hash not in hashes:
             raise DockerClientError('当前Compose配置与运行容器配置不一致，请先人工发布')
         config_hash = current_hash

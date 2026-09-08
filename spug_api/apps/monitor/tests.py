@@ -305,6 +305,24 @@ class DockerScopeValidationTests(SimpleTestCase):
         with self.assertRaisesRegex(Exception, '配置.*不一致'):
             validate_and_normalize_scope(object(), submitted)
 
+    @patch('apps.monitor.docker.read_service_hash', return_value='hash-1')
+    @patch('apps.monitor.docker.discover_all')
+    def test_missing_replica_hash_label_disables_automatic_recovery(self, discover, _read_hash):
+        project = dict(self.PROJECT)
+        project['containers'] = [dict(item) for item in self.PROJECT['containers']]
+        project['containers'][1]['config_hash'] = ''
+        discover.return_value = {'projects': [project], 'standalone': []}
+        submitted = {
+            'version': 1, 'kind': 'compose_service', 'project': 'demo',
+            'workdir': '/opt/demo', 'config_files': ['/opt/demo/compose.yml'],
+            'service': 'api',
+        }
+
+        scope = validate_and_normalize_scope(object(), submitted)
+
+        self.assertFalse(scope['can_recover_missing'])
+        self.assertEqual(scope['config_hash'], '')
+
     @patch('apps.monitor.docker.read_service_hash', side_effect=Exception('unsupported'))
     @patch('apps.monitor.docker.discover_all')
     def test_hash_capability_failure_disables_missing_replica_recovery(self, discover, _read_hash):
@@ -410,6 +428,16 @@ class DockerRepairPolicyTests(SimpleTestCase):
 
         self.assertFalse(allowed)
         self.assertIn('重启循环', reason)
+
+    def test_policy_check_can_skip_duplicate_observation(self):
+        self.assertTrue(may_start_repair(
+            self.redis, self.key, self.details(state='restarting'), now=1000)[0])
+
+        allowed, _reason = may_start_repair(
+            self.redis, self.key, self.details(state='restarting'),
+            now=1001, observe=False)
+
+        self.assertTrue(allowed)
 
     def test_verification_over_thirty_minutes_is_rejected(self):
         allowed, reason = may_start_repair(

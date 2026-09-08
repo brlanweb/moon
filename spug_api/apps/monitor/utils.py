@@ -146,7 +146,7 @@ def handle_ai_post_task(task_id, target, message, fault_times, verifier=None, re
             redis = get_redis_connection()
             key = repair_target_key(det.ai_host_id, target_scope)
             allowed, reason = may_start_repair(
-                redis, key, getattr(result, 'details', {}) or {})
+                redis, key, getattr(result, 'details', {}) or {}, observe=False)
             if not allowed:
                 logging.warning(f'skip docker ai repair: {reason}')
                 _notify_ai_skipped(det, target, message, fault_times, reason)
