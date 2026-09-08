@@ -150,6 +150,9 @@ def run_test(request):
         Argument('targets', type=list, filter=lambda x: len(x), help='请输入监控地址'),
         Argument('extra', required=False)
     ).parse(request.body)
+    if error is None and form.type == '6':
+        form.ai_mode = ''
+        error = prepare_docker_form(request.user, form)
     if error is None:
         is_success, message = dispatch(form.type, form.targets[0], form.extra)
         return json_response({'is_success': is_success, 'message': message})

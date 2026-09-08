@@ -45,6 +45,9 @@ export default observer(function () {
     setLoading(true)
     const formData = form.getFieldsValue();
     Object.assign(formData, lds.pick(store.record, ['id', 'name', 'desc', 'targets', 'extra', 'type', 'group']))
+    if (store.record.type === '6' && formData.ai_mode) {
+      formData.ai_host_id = store.record.targets[0];
+    }
     formData['id'] = store.record.id;
     http.post('/api/monitor/', formData)
       .then(() => {
@@ -61,6 +64,9 @@ export default observer(function () {
   function handleAiModeChange(mode) {
     setAiMode(mode);
     if (!mode) return;
+    if (store.record.type === '6') {
+      form.setFieldsValue({ai_host_id: store.record.targets[0]});
+    }
     const {ceiling, fallback} = AI_LOOP_LIMITS[mode];
     const current = form.getFieldValue('ai_max_loops');
     if (!current) {
@@ -77,6 +83,7 @@ export default observer(function () {
   }
 
   const info = store.record;
+  const isDocker = info.type === '6';
   return (
     <Form form={form} labelCol={{span: 6}} wrapperCol={{span: 14}}>
       <Form.Item name="rate" initialValue={info.rate || 5} label={t('监控频率')} tooltip={t('每隔N分钟检测一次')}>
@@ -107,9 +114,14 @@ export default observer(function () {
       </Form.Item>
       {aiMode && (
         <React.Fragment>
-          <Form.Item required name="ai_host_id" initialValue={info.ai_host_id} label={t('排查主机')}
-                     extra={t('智能体将通过SSH登录该主机进行排查，仅可选择已验证的主机。')}>
-            <Select showSearch allowClear optionFilterProp="children" placeholder={t('请选择主机')}>
+          <Form.Item required name="ai_host_id"
+                     initialValue={isDocker ? info.targets?.[0] : info.ai_host_id}
+                     label={isDocker ? t('目标主机') : t('排查主机')}
+                     extra={isDocker
+                       ? t('Docker监控的处理主机固定为检测目标，不能另选主机。')
+                       : t('智能体将通过SSH登录该主机进行排查，仅可选择已验证的主机。')}>
+            <Select showSearch allowClear={!isDocker} disabled={isDocker}
+                    optionFilterProp="children" placeholder={t('请选择主机')}>
               {hosts.map(item => (
                 <Select.Option key={item.id} value={item.id}>{item.name}（{item.hostname}）</Select.Option>
               ))}

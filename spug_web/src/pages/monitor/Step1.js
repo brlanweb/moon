@@ -9,6 +9,7 @@ import { ExclamationCircleOutlined } from '@ant-design/icons';
 import { Modal, Form, Input, Select, Button, message } from 'antd';
 import TemplateSelector from '../exec/task/TemplateSelector';
 import HostSelector from 'pages/host/Selector';
+import DockerTarget from './DockerTarget';
 import { LinkButton, ACEditor } from 'components';
 import { http, cleanCommand, t } from 'libs';
 import store from './store';
@@ -66,6 +67,7 @@ export default observer(function () {
   function canNext() {
     const {type, targets, extra, group} = store.record;
     const is_verify = name && group && targets.length;
+    if (type === '6') return is_verify && extra && extra.kind;
     if (['2', '3', '4'].includes(type)) {
       return is_verify && extra
     } else {
@@ -108,10 +110,21 @@ export default observer(function () {
           <Select.Option value="5">{t('Ping检测')}</Select.Option>
           <Select.Option value="3">{t('进程检测')}</Select.Option>
           <Select.Option value="4">{t('自定义脚本')}</Select.Option>
+          <Select.Option value="6">{t('Docker服务检测')}</Select.Option>
         </Select>
       </Form.Item>
       <Form.Item required label={t('监控名称')}>
         <Input value={name} onChange={e => store.record.name = e.target.value} placeholder={t('请输入监控名称')}/>
+      </Form.Item>
+      <Form.Item required label={t('Docker目标')} style={getStyle(['6'])}
+                 extra={t('Compose服务按项目选择；独立容器删除后只能告警，无法自动重建。')}>
+        <DockerTarget
+          hostId={targets[0]}
+          value={extra}
+          onChange={(hostId, scope) => {
+            store.record.targets = hostId ? [hostId] : [];
+            store.record.extra = scope;
+          }}/>
       </Form.Item>
       <Form.Item required label={t('监控地址')} style={getStyle(['1'])}>
         <Select
