@@ -312,6 +312,29 @@ def build_container_command(action, name, tail=200):
     return f'docker {action} -- {shlex.quote(name)}'
 
 
+def build_service_hash_command(project, service):
+    service = _safe_name(service, '服务名称')
+    base, _ = _compose_base(project)
+    return f'{base} config --hash {shlex.quote(service)}'
+
+
+def parse_service_hash(output, service):
+    service = _safe_name(service, '服务名称')
+    for line in (output or '').splitlines():
+        parts = line.strip().split()
+        if len(parts) == 2 and parts[0] == service and parts[1]:
+            return parts[1]
+    raise DockerClientError('无法读取目标服务配置哈希')
+
+
+def read_service_hash(host, project, service, ssh=None):
+    command = build_service_hash_command(project, service)
+    code, output = _run(host, command, 60, ssh)
+    if code:
+        raise DockerClientError(output or '当前Docker Compose不支持服务配置哈希')
+    return parse_service_hash(output, service)
+
+
 def build_monitor_restart_command(name):
     """只重启一个已经过作用域校验的目标容器。"""
     return f'docker restart -- {shlex.quote(_safe_name(name, "容器名称"))}'

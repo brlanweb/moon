@@ -1,9 +1,10 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from types import SimpleNamespace
 import json
 import time
 
-from apps.docker.client import DockerClientError, discover_all
+from apps.docker.client import DockerClientError, discover_all, read_service_hash
 
 
 @dataclass
@@ -17,6 +18,69 @@ class DetectionResult:
         # Keep existing call sites that unpack ``is_ok, message`` compatible.
         yield self.is_ok
         yield self.message
+
+
+def validate_and_normalize_scope(host, raw_scope):
+    """只用实时发现结果重建可持久化目标，忽略前端提交的基线字段。"""
+    if isinstance(raw_scope, str):
+        try:
+            raw_scope = json.loads(raw_scope)
+        except (TypeError, ValueError) as exc:
+            raise DockerClientError('Docker监控目标配置格式无效') from exc
+    if not isinstance(raw_scope, dict) or raw_scope.get('version') != 1:
+        raise DockerClientError('Docker监控目标配置版本无效')
+
+    payload = discover_all(host)
+    kind = raw_scope.get('kind')
+    if kind == 'standalone_container':
+        name = raw_scope.get('container')
+        known = {item.get('name') for item in payload.get('standalone') or []}
+        if not name or name not in known:
+            raise DockerClientError('独立容器不存在，请刷新后重试')
+        return {'version': 1, 'kind': kind, 'container': name}
+    if kind != 'compose_service':
+        raise DockerClientError('Docker监控目标类型无效')
+
+    lookup_scope = {
+        'project': raw_scope.get('project'),
+        'workdir': raw_scope.get('workdir'),
+        'config_files': raw_scope.get('config_files') or [],
+    }
+    project = _project(lookup_scope, payload)
+    if not project:
+        raise DockerClientError('Compose项目不存在或配置路径已变化，请刷新后重试')
+    service = raw_scope.get('service')
+    containers = [item for item in project.get('containers') or []
+                  if item.get('service') == service]
+    if not service or not containers:
+        raise DockerClientError('Compose服务不存在，请刷新后重试')
+
+    hashes = {item.get('config_hash') for item in containers if item.get('config_hash')}
+    config_hash = ''
+    can_recover = False
+    if len(hashes) > 1:
+        raise DockerClientError('目标服务各副本配置哈希不一致，请人工确认')
+    try:
+        current_hash = read_service_hash(host, SimpleNamespace(**project), service)
+    except Exception:
+        current_hash = ''
+    if current_hash and hashes:
+        if current_hash not in hashes:
+            raise DockerClientError('当前Compose配置与运行容器配置不一致，请先人工发布')
+        config_hash = current_hash
+        can_recover = True
+
+    return {
+        'version': 1,
+        'kind': kind,
+        'project': project['name'],
+        'workdir': project['workdir'],
+        'config_files': project.get('config_files') or [project['config_file']],
+        'service': service,
+        'expected_replicas': len(containers),
+        'config_hash': config_hash,
+        'can_recover_missing': can_recover,
+    }
 
 
 def parse_scope(raw_scope):

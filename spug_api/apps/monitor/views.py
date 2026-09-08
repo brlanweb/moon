@@ -7,8 +7,33 @@ from django_redis import get_redis_connection
 from libs import json_response, JsonParser, Argument, human_datetime, auth
 from apps.monitor.models import Detection, AI_LOOP_LIMITS
 from apps.monitor.executors import dispatch
+from apps.monitor.docker import validate_and_normalize_scope
+from apps.host.models import Host
+from apps.account.utils import has_host_perm
+from apps.docker.client import DockerClientError
 from datetime import datetime
 import json
+
+
+def prepare_docker_form(user, form):
+    if len(form.targets) != 1:
+        return 'Docker服务检测必须且只能选择一台主机'
+    host_id = form.targets[0]
+    if not user.has_perms(['docker.project.view']):
+        return '缺少Docker查看权限'
+    if not has_host_perm(user, host_id):
+        return '无权访问所选Docker主机'
+    host = Host.objects.filter(pk=host_id).first()
+    if not host:
+        return '所选Docker主机不存在'
+    try:
+        scope = validate_and_normalize_scope(host, form.extra)
+    except DockerClientError as exc:
+        return str(exc)
+    form.extra = json.dumps(scope, ensure_ascii=False)
+    if form.ai_mode:
+        form.ai_host_id = host_id
+    return None
 
 
 class DetectionView(View):
@@ -38,6 +63,8 @@ class DetectionView(View):
             Argument('ai_host_id', type=int, required=False),
             Argument('ai_max_loops', type=int, required=False),
         ).parse(request.body)
+        if error is None and form.type == '6':
+            error = prepare_docker_form(request.user, form)
         if error is None:
             # 报警方式不做任何前置拦截：渠道未配置时由 libs/spug.py 在实际发送阶段
             # 给出站内通知，配置保存本身不再被阻断。

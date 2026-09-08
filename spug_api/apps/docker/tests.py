@@ -17,6 +17,9 @@ from apps.docker.client import (
     build_monitor_recover_command,
     build_monitor_restart_command,
     build_resource_command,
+    build_service_hash_command,
+    parse_service_hash,
+    read_service_hash,
     build_stats_command,
     cache_key,
     iter_stats_frames,
@@ -201,6 +204,30 @@ class DockerClientTests(SimpleTestCase):
                          'docker restart -- demo-api-2')
         self.assertEqual(build_monitor_logs_command('demo-api-2'),
                          'docker logs --tail 200 -- demo-api-2')
+
+    def test_service_hash_command_and_parser_are_scoped_to_one_service(self):
+        project = SimpleNamespace(
+            name='demo', workdir='/opt/apps/demo',
+            config_file='/opt/apps/demo/compose.yaml',
+            config_files=['/opt/apps/demo/compose.yaml'])
+
+        self.assertEqual(
+            build_service_hash_command(project, 'api'),
+            'cd /opt/apps/demo && docker compose -p demo -f /opt/apps/demo/compose.yaml '
+            'config --hash api')
+        self.assertEqual(parse_service_hash('api abc123\n', 'api'), 'abc123')
+        with self.assertRaises(DockerClientError):
+            parse_service_hash('worker deadbeef\n', 'api')
+
+    @patch('apps.docker.client._run', return_value=(0, 'api abc123\n'))
+    def test_read_service_hash_executes_scoped_command(self, run):
+        project = SimpleNamespace(
+            name='demo', workdir='/opt/apps/demo',
+            config_file='/opt/apps/demo/compose.yaml',
+            config_files=['/opt/apps/demo/compose.yaml'])
+
+        self.assertEqual(read_service_hash(object(), project, 'api'), 'abc123')
+        self.assertIn('config --hash api', run.call_args.args[1])
 
     def test_monitor_commands_reject_untrusted_identifiers(self):
         project = SimpleNamespace(

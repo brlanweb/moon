@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import json
 from unittest.mock import patch
 
 from django.test import SimpleTestCase
@@ -8,9 +9,13 @@ from apps.monitor.docker import (
     check_target,
     evaluate_target,
     startup_grace_seconds,
+    validate_and_normalize_scope,
     verify_recovery,
 )
 from apps.monitor.executors import dispatch
+from apps.monitor.models import Detection
+from apps.monitor.views import prepare_docker_form
+from libs import AttrDict
 
 
 class DockerMonitorEvaluationTests(SimpleTestCase):
@@ -119,6 +124,106 @@ class DockerMonitorEvaluationTests(SimpleTestCase):
         self.assertFalse(result.is_ok)
         self.assertEqual(result.failure_kind, 'infrastructure')
         self.assertIn('ssh down', result.message)
+
+
+class DockerMonitorFormTests(SimpleTestCase):
+    def test_detection_view_decodes_docker_scope(self):
+        scope = {'version': 1, 'kind': 'standalone_container', 'container': 'worker'}
+        detection = Detection(type='6', targets='[7]', extra=json.dumps(scope),
+                              notify_mode='[]', notify_grp='[]')
+
+        self.assertEqual(detection.to_view()['extra'], scope)
+        self.assertEqual(detection.get_type_display(), 'Docker服务检测')
+
+    @patch('apps.monitor.views.validate_and_normalize_scope')
+    @patch('apps.monitor.views.Host.objects.filter')
+    @patch('apps.monitor.views.has_host_perm', return_value=True)
+    def test_prepare_docker_form_fixes_ai_host_and_serializes_live_scope(
+            self, _has_perm, hosts, validate):
+        user = type('User', (), {'has_perms': lambda self, perms: True})()
+        host = object()
+        hosts.return_value.first.return_value = host
+        validate.return_value = {
+            'version': 1, 'kind': 'standalone_container', 'container': 'worker'}
+        form = AttrDict(type='6', targets=[7], extra={'version': 1},
+                        ai_mode='repair', ai_host_id=99)
+
+        error = prepare_docker_form(user, form)
+
+        self.assertIsNone(error)
+        self.assertEqual(form.ai_host_id, 7)
+        self.assertEqual(json.loads(form.extra)['container'], 'worker')
+        validate.assert_called_once_with(host, {'version': 1})
+
+    def test_prepare_docker_form_requires_one_host(self):
+        user = type('User', (), {'has_perms': lambda self, perms: True})()
+        form = AttrDict(type='6', targets=[1, 2], extra={}, ai_mode='')
+
+        self.assertIn('一台', prepare_docker_form(user, form))
+
+
+class DockerScopeValidationTests(SimpleTestCase):
+    PROJECT = {
+        'name': 'demo', 'workdir': '/opt/demo',
+        'config_file': '/opt/demo/compose.yml',
+        'config_files': ['/opt/demo/compose.yml'],
+        'containers': [
+            {**DockerMonitorEvaluationTests.container('demo-api-1'), 'config_hash': 'hash-1'},
+            {**DockerMonitorEvaluationTests.container('demo-api-2'), 'config_hash': 'hash-1'},
+        ],
+    }
+
+    @patch('apps.monitor.docker.read_service_hash', return_value='hash-1')
+    @patch('apps.monitor.docker.discover_all')
+    def test_compose_scope_is_rebuilt_from_live_discovery(self, discover, _read_hash):
+        discover.return_value = {'projects': [self.PROJECT], 'standalone': []}
+        submitted = {
+            'version': 1, 'kind': 'compose_service', 'project': 'demo',
+            'workdir': '/opt/demo', 'config_files': ['/opt/demo/compose.yml'],
+            'service': 'api', 'expected_replicas': 99, 'config_hash': 'forged',
+        }
+
+        scope = validate_and_normalize_scope(object(), submitted)
+
+        self.assertEqual(scope['expected_replicas'], 2)
+        self.assertEqual(scope['config_hash'], 'hash-1')
+        self.assertTrue(scope['can_recover_missing'])
+
+    @patch('apps.monitor.docker.read_service_hash', return_value='changed')
+    @patch('apps.monitor.docker.discover_all')
+    def test_compose_scope_rejects_config_hash_drift(self, discover, _read_hash):
+        discover.return_value = {'projects': [self.PROJECT], 'standalone': []}
+        submitted = {
+            'version': 1, 'kind': 'compose_service', 'project': 'demo',
+            'workdir': '/opt/demo', 'config_files': ['/opt/demo/compose.yml'],
+            'service': 'api',
+        }
+
+        with self.assertRaisesRegex(Exception, '配置.*不一致'):
+            validate_and_normalize_scope(object(), submitted)
+
+    @patch('apps.monitor.docker.read_service_hash', side_effect=Exception('unsupported'))
+    @patch('apps.monitor.docker.discover_all')
+    def test_hash_capability_failure_disables_missing_replica_recovery(self, discover, _read_hash):
+        discover.return_value = {'projects': [self.PROJECT], 'standalone': []}
+        submitted = {
+            'version': 1, 'kind': 'compose_service', 'project': 'demo',
+            'workdir': '/opt/demo', 'config_files': ['/opt/demo/compose.yml'],
+            'service': 'api',
+        }
+
+        scope = validate_and_normalize_scope(object(), submitted)
+
+        self.assertFalse(scope['can_recover_missing'])
+        self.assertEqual(scope['config_hash'], '')
+
+    @patch('apps.monitor.docker.discover_all')
+    def test_standalone_scope_rejects_unknown_container(self, discover):
+        discover.return_value = {'projects': [], 'standalone': []}
+
+        with self.assertRaisesRegex(Exception, '不存在'):
+            validate_and_normalize_scope(object(), {
+                'version': 1, 'kind': 'standalone_container', 'container': 'forged'})
 
 
 class DockerDispatchTests(SimpleTestCase):
