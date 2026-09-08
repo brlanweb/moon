@@ -108,10 +108,19 @@ def parse_inspect(output):
         service = labels.get('com.docker.compose.service')
         workdir = labels.get('com.docker.compose.project.working_dir') or ''
         files = _config_files(labels)
+        state = item.get('State') or {}
+        healthcheck = config.get('Healthcheck') or {}
         container = {
             'name': (item.get('Name') or '').lstrip('/'),
             'service': service or '',
-            'state': (item.get('State') or {}).get('Status') or '',
+            'state': state.get('Status') or '',
+            'health': (state.get('Health') or {}).get('Status') or '',
+            'started_at': state.get('StartedAt') or '',
+            'restart_count': int(item.get('RestartCount') or 0),
+            'config_hash': labels.get('com.docker.compose.config-hash') or '',
+            'health_start_period_ns': int(healthcheck.get('StartPeriod') or 0),
+            'health_interval_ns': int(healthcheck.get('Interval') or 0),
+            'health_retries': int(healthcheck.get('Retries') or 0),
             'image': config.get('Image') or '',
             'ports': _ports(item),
         }
@@ -301,6 +310,30 @@ def build_container_command(action, name, tail=200):
         # -f 允许删除运行中的容器；不加 -v，保留匿名卷
         return f'docker rm -f -- {shlex.quote(name)}'
     return f'docker {action} -- {shlex.quote(name)}'
+
+
+def build_monitor_restart_command(name):
+    """只重启一个已经过作用域校验的目标容器。"""
+    return f'docker restart -- {shlex.quote(_safe_name(name, "容器名称"))}'
+
+
+def build_monitor_logs_command(name):
+    """AI 输入固定为最近 200 行，字节截断由调用工具负责。"""
+    return f'docker logs --tail 200 -- {shlex.quote(_safe_name(name, "容器名称"))}'
+
+
+def build_monitor_recover_command(project, service, replicas):
+    """恢复目标服务副本，不启动依赖、不重建现存副本、不拉取镜像。"""
+    service = _safe_name(service, '服务名称')
+    try:
+        replicas = int(replicas)
+    except (TypeError, ValueError) as exc:
+        raise DockerClientError('副本数格式无效') from exc
+    if isinstance(replicas, bool) or not 1 <= replicas <= 100:
+        raise DockerClientError('副本数必须在1到100之间')
+    base, _ = _compose_base(project)
+    return (f'{base} up -d --no-deps --no-recreate --pull never '
+            f'--scale {shlex.quote(service)}={replicas} {shlex.quote(service)}')
 
 
 def execute_container(host, action, name, tail=200):

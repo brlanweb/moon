@@ -13,6 +13,9 @@ from apps.docker.client import (
     build_container_command,
     build_container_logs_follow_command,
     build_logs_follow_command,
+    build_monitor_logs_command,
+    build_monitor_recover_command,
+    build_monitor_restart_command,
     build_resource_command,
     build_stats_command,
     cache_key,
@@ -124,9 +127,15 @@ class DockerClientTests(SimpleTestCase):
             'config_files': ['/opt/apps/demo/compose.yaml'],
             'containers': [{
                 'name': 'demo-db-1', 'service': 'db', 'state': 'exited',
+                'health': '', 'started_at': '', 'restart_count': 0,
+                'config_hash': '', 'health_start_period_ns': 0,
+                'health_interval_ns': 0, 'health_retries': 0,
                 'image': 'postgres:16', 'ports': [],
             }, {
                 'name': 'demo-web-1', 'service': 'web', 'state': 'running',
+                'health': '', 'started_at': '', 'restart_count': 0,
+                'config_hash': '', 'health_start_period_ns': 0,
+                'health_interval_ns': 0, 'health_retries': 0,
                 'image': 'demo:latest', 'ports': ['0.0.0.0:8080:80/tcp'],
             }],
         }])
@@ -140,6 +149,87 @@ class DockerClientTests(SimpleTestCase):
         }]
 
         self.assertEqual(parse_docker_inspect(json.dumps(payload)), [])
+
+    def test_parse_inspect_includes_monitor_health_metadata(self):
+        payload = [{
+            'Name': '/demo-api-1',
+            'RestartCount': 2,
+            'Config': {
+                'Image': 'demo:latest',
+                'Healthcheck': {
+                    'StartPeriod': 300_000_000_000,
+                    'Interval': 30_000_000_000,
+                    'Retries': 3,
+                },
+                'Labels': {
+                    'com.docker.compose.project': 'demo',
+                    'com.docker.compose.service': 'api',
+                    'com.docker.compose.project.working_dir': '/opt/apps/demo',
+                    'com.docker.compose.project.config_files': '/opt/apps/demo/compose.yaml',
+                    'com.docker.compose.config-hash': 'abc123',
+                },
+            },
+            'State': {
+                'Status': 'running',
+                'StartedAt': '2026-09-08T01:00:00Z',
+                'Health': {'Status': 'starting'},
+            },
+            'NetworkSettings': {'Ports': {}},
+        }]
+
+        container = parse_inspect(json.dumps(payload))['projects'][0]['containers'][0]
+
+        self.assertEqual(container['health'], 'starting')
+        self.assertEqual(container['started_at'], '2026-09-08T01:00:00Z')
+        self.assertEqual(container['restart_count'], 2)
+        self.assertEqual(container['config_hash'], 'abc123')
+        self.assertEqual(container['health_start_period_ns'], 300_000_000_000)
+        self.assertEqual(container['health_interval_ns'], 30_000_000_000)
+        self.assertEqual(container['health_retries'], 3)
+
+    def test_monitor_commands_are_scoped_and_do_not_pull_or_start_dependencies(self):
+        project = SimpleNamespace(
+            name='demo', workdir='/opt/apps/demo',
+            config_file='/opt/apps/demo/compose.yaml',
+            config_files=['/opt/apps/demo/compose.yaml'])
+
+        self.assertEqual(
+            build_monitor_recover_command(project, 'api', 3),
+            'cd /opt/apps/demo && docker compose -p demo -f /opt/apps/demo/compose.yaml '
+            'up -d --no-deps --no-recreate --pull never --scale api=3 api')
+        self.assertEqual(build_monitor_restart_command('demo-api-2'),
+                         'docker restart -- demo-api-2')
+        self.assertEqual(build_monitor_logs_command('demo-api-2'),
+                         'docker logs --tail 200 -- demo-api-2')
+
+    def test_monitor_commands_reject_untrusted_identifiers(self):
+        project = SimpleNamespace(
+            name='demo', workdir='/opt/apps/demo',
+            config_file='/opt/apps/demo/compose.yaml',
+            config_files=['/opt/apps/demo/compose.yaml'])
+        for service in ('api; rm -rf /', 'api other', '$(whoami)'):
+            with self.subTest(service=service), self.assertRaises(DockerClientError):
+                build_monitor_recover_command(project, service, 1)
+        for replicas in (0, -1, 101, '1;id'):
+            with self.subTest(replicas=replicas), self.assertRaises(DockerClientError):
+                build_monitor_recover_command(project, 'api', replicas)
+        with self.assertRaises(DockerClientError):
+            build_monitor_restart_command('api;id')
+
+    def test_parse_inspect_defaults_missing_monitor_metadata(self):
+        payload = [{
+            'Name': '/plain',
+            'Config': {'Image': 'redis:7', 'Labels': {}},
+            'State': {'Status': 'running'},
+            'NetworkSettings': {'Ports': {}},
+        }]
+
+        container = parse_inspect(json.dumps(payload))['standalone'][0]
+
+        self.assertEqual(container['health'], '')
+        self.assertEqual(container['started_at'], '')
+        self.assertEqual(container['restart_count'], 0)
+        self.assertEqual(container['health_start_period_ns'], 0)
 
     def test_build_publish_uses_discovered_workdir_and_config_file(self):
         project = SimpleNamespace(
