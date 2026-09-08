@@ -1,10 +1,112 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from hashlib import sha256
 from types import SimpleNamespace
 import json
 import time
 
 from apps.docker.client import DockerClientError, discover_all, read_service_hash
+
+
+POLICY_TTL = 6 * 60 * 60
+COOLDOWN_SECONDS = 30 * 60
+MAX_REPAIRS = 3
+RESTART_WINDOW = 10 * 60
+
+
+def repair_target_key(host_id, raw_scope):
+    scope = parse_scope(raw_scope)
+    identity = {
+        'host_id': int(host_id),
+        'kind': scope['kind'],
+        'project': scope.get('project'),
+        'service': scope.get('service'),
+        'container': scope.get('container'),
+    }
+    digest = sha256(json.dumps(identity, sort_keys=True).encode('utf-8')).hexdigest()
+    return f'spug:docker:repair:{digest}'
+
+
+def _load_policy(redis, key):
+    raw = redis.get(key)
+    if isinstance(raw, bytes):
+        raw = raw.decode('utf-8', 'replace')
+    try:
+        data = json.loads(raw) if raw else {}
+    except (TypeError, ValueError):
+        data = {}
+    data.setdefault('attempts', [])
+    data.setdefault('samples', {})
+    return data
+
+
+def _save_policy(redis, key, data):
+    redis.setex(key, POLICY_TTL, json.dumps(data, ensure_ascii=False))
+
+
+def may_start_repair(redis, key, details, now=None):
+    now = int(now or time.time())
+    data = _load_policy(redis, key)
+    attempts = [int(value) for value in data['attempts'] if int(value) > now - POLICY_TTL]
+    data['attempts'] = attempts
+
+    if int(data.get('fused_until') or 0) > now:
+        _save_policy(redis, key, data)
+        return False, '目标已触发重启循环熔断，6小时窗口结束或人工复位后解除'
+    if int(data.get('cooldown_until') or 0) > now:
+        _save_policy(redis, key, data)
+        return False, '目标处于自动修复冷却期，30分钟后可再次尝试'
+    if len(attempts) >= MAX_REPAIRS:
+        _save_policy(redis, key, data)
+        return False, '同一目标6小时内已自动修复3次，已转人工处理'
+    if int((details or {}).get('verification_timeout') or 0) > 1800:
+        _save_policy(redis, key, data)
+        return False, '目标恢复验证预计超过30分钟，已转人工处理'
+
+    restart_loop = False
+    samples = data['samples']
+    for item in (details or {}).get('containers') or []:
+        name = item.get('name')
+        if not name:
+            continue
+        previous = samples.get(name) or {}
+        current_count = int(item.get('restart_count') or 0)
+        previous_time = int(previous.get('time') or 0)
+        previous_count = int(previous.get('count') or 0)
+        current_state = item.get('state') or ''
+        if previous_time and previous_time < now and previous_time >= now - RESTART_WINDOW:
+            if current_count - previous_count >= 3:
+                restart_loop = True
+            if current_state == 'restarting' and previous.get('state') == 'restarting':
+                restart_loop = True
+        samples[name] = {'time': now, 'count': current_count, 'state': current_state}
+    if restart_loop:
+        data['fused_until'] = now + POLICY_TTL
+        _save_policy(redis, key, data)
+        return False, '检测到目标进入重启循环，已熔断并转人工处理'
+
+    _save_policy(redis, key, data)
+    return True, ''
+
+
+def record_repair_started(redis, key, now=None):
+    now = int(now or time.time())
+    data = _load_policy(redis, key)
+    data['attempts'] = [int(value) for value in data['attempts']
+                        if int(value) > now - POLICY_TTL]
+    data['attempts'].append(now)
+    _save_policy(redis, key, data)
+
+
+def record_repair_write(redis, key, now=None):
+    now = int(now or time.time())
+    data = _load_policy(redis, key)
+    data['cooldown_until'] = now + COOLDOWN_SECONDS
+    _save_policy(redis, key, data)
+
+
+def clear_repair_policy(redis, key):
+    redis.delete(key)
 
 
 @dataclass

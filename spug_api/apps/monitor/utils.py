@@ -2,6 +2,7 @@
 # Copyright: (c) <spug.dev@gmail.com>
 # Released under the AGPL-3.0 License.
 from django.db import close_old_connections
+from django_redis import get_redis_connection
 from apps.alarm.models import Alarm
 from apps.monitor.models import Detection, AI_LOOP_LIMITS
 from apps.schedule.models import Task
@@ -84,10 +85,26 @@ def _build_trigger_message(det, target, message):
     elif det.type == '5':
         lines.append(f'检测目标：Ping {target}')
         lines.append('排查重点：该地址为何 Ping 不通（网卡、路由、防火墙）。')
+    elif det.type == '6':
+        try:
+            scope = json.loads(det.extra) if isinstance(det.extra, str) else det.extra
+        except (TypeError, ValueError):
+            scope = {}
+        label = scope.get('service') or scope.get('container') or '未知目标'
+        lines.append(f'Docker目标：{scope.get("kind") or "unknown"} / {label}')
+        lines.append('排查重点：只检查该目标的状态、退出信息、健康检查和最近日志。')
     return '\n'.join(lines)
 
 
-def handle_ai_post_task(task_id, target, message, fault_times, verifier=None):
+def _notify_ai_skipped(det, target, message, fault_times, reason):
+    duration = seconds_to_human(det.rate * max(fault_times, 1) * 60)
+    body = f'原始告警：{message}\nAI自动处理已跳过：{reason}'
+    Notification(json.loads(det.notify_grp), '1', target,
+                 f'{det.name}[AI自动处理已跳过]', body, duration) \
+        .dispatch_monitor(json.loads(det.notify_mode))
+
+
+def handle_ai_post_task(task_id, target, message, fault_times, verifier=None, result=None):
     """告警后置任务：原始告警已经发出，这里由智能体处理并追加第二条通知。
 
     通知分两次发送：
@@ -105,10 +122,36 @@ def handle_ai_post_task(task_id, target, message, fault_times, verifier=None):
     det = Detection.objects.filter(pk=task_id).first()
     if not det or det.ai_mode not in ('diagnose', 'repair') or not det.ai_host_id:
         return None
+    if det.type == '6' and getattr(result, 'failure_kind', '') == 'infrastructure':
+        logging.warning('skip docker ai task for infrastructure failure')
+        return None
 
     # 延迟导入避免 monitor 模块加载期与 ai 模块产生循环依赖
     from apps.ai.models import AgentSession
     from apps.ai.agent import run_session
+
+    target_scope = None
+    if det.type == '6':
+        target_scope = det.extra if isinstance(det.extra, str) \
+            else json.dumps(det.extra, ensure_ascii=False)
+        if AgentSession.objects.filter(
+                detection_id=det.id, status__in=('running', 'waiting')).exists():
+            reason = '该目标已有智能体会话在运行，本次不重复启动'
+            logging.warning(f'skip duplicate docker ai task for detection {det.id}')
+            _notify_ai_skipped(det, target, message, fault_times, reason)
+            return None
+        if det.ai_mode == 'repair':
+            from apps.monitor.docker import (
+                may_start_repair, record_repair_started, repair_target_key)
+            redis = get_redis_connection()
+            key = repair_target_key(det.ai_host_id, target_scope)
+            allowed, reason = may_start_repair(
+                redis, key, getattr(result, 'details', {}) or {})
+            if not allowed:
+                logging.warning(f'skip docker ai repair: {reason}')
+                _notify_ai_skipped(det, target, message, fault_times, reason)
+                return None
+            record_repair_started(redis, key)
 
     mode_alias = 'AI诊断' if det.ai_mode == 'diagnose' else 'AI修复'
     session = AgentSession.objects.create(
@@ -119,6 +162,7 @@ def handle_ai_post_task(task_id, target, message, fault_times, verifier=None):
         detection_id=det.id,
         target=target,
         trigger_message=_build_trigger_message(det, target, message),
+        target_scope=target_scope,
         max_loops=_resolve_max_loops(det))
     try:
         session = run_session(session, verifier if det.ai_mode == 'repair' else None)

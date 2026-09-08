@@ -112,6 +112,23 @@ class DockerTargetOperatorTests(SimpleTestCase):
         self.assertIn('demo-api-2', result)
         self.assertNotIn('demo-api-1', execute.call_args.args[1])
         self.assertEqual(execute.call_count, 1)
+        self.assertTrue(operator.did_write)
+
+    @patch('apps.ai.docker_tools._exec', return_value=(0, 'created'))
+    @patch('apps.ai.docker_tools.read_service_hash', return_value='hash-1')
+    @patch('apps.ai.docker_tools.discover_all', return_value={
+        'projects': [], 'standalone': []})
+    def test_recover_can_recreate_fully_missing_compose_service(
+            self, _discover, _hash, execute):
+        operator = DockerTargetOperator(object(), self.SCOPE)
+
+        result = operator.recover()
+
+        self.assertTrue(operator.did_write)
+        self.assertIn('created', result)
+        command = execute.call_args.args[1]
+        self.assertIn('--no-deps', command)
+        self.assertIn('--scale api=2 api', command)
 
     @patch('apps.ai.docker_tools._exec')
     @patch('apps.ai.docker_tools.read_service_hash', return_value='changed')

@@ -57,7 +57,6 @@ OUTPUT_LIMIT = int(getattr(settings, 'AI_OUTPUT_LIMIT', 20000))
 CONTEXT_BUDGET = int(getattr(settings, 'AI_CONTEXT_LIMIT', 1200000))
 # 兜底的条数上限，防止极端情况下消息条数过多拖慢序列化
 HISTORY_LIMIT = int(getattr(settings, 'AI_HISTORY_LIMIT', 2000))
-DOCKER_WRITE_TOOLS = {'docker_target_restart', 'docker_target_recover'}
 
 
 def _tool_slug(text):
@@ -92,6 +91,7 @@ class AgentRunner:
         self.loop_no = 0
         self._verified = None      # 修复模式复检结果：True 表示故障已恢复
         self._verify_msg = ''
+        self._docker_write_executed = False
 
     # ---------- 记录与事件 ----------
 
@@ -275,6 +275,16 @@ def _make_docker_tools(runner):
     def record(ctx, name, output, write=False):
         ctx.deps.runner.record('tool', name, extra={'scoped': True, 'write': write})
         ctx.deps.runner.record('tool_result', output)
+        if write:
+            ctx.deps.runner._docker_write_executed = True
+            try:
+                from django_redis import get_redis_connection
+                from apps.monitor.docker import repair_target_key, record_repair_write
+                key = repair_target_key(
+                    ctx.deps.session.host_id, ctx.deps.session.target_scope)
+                record_repair_write(get_redis_connection(), key)
+            except Exception as exc:
+                logging.warning(f'record docker repair cooldown failed: {exc}')
         return output
 
     def docker_target_status(ctx: RunContext[Deps]) -> str:
@@ -287,11 +297,15 @@ def _make_docker_tools(runner):
 
     def docker_target_restart(ctx: RunContext[Deps]) -> str:
         """只重启监控目标中当前状态异常的现存容器。"""
-        return record(ctx, 'docker_target_restart', operator(ctx).restart(), True)
+        target = operator(ctx)
+        output = target.restart()
+        return record(ctx, 'docker_target_restart', output, target.did_write)
 
     def docker_target_recover(ctx: RunContext[Deps]) -> str:
         """在配置哈希一致时，把Compose目标恢复到保存的副本基线。"""
-        return record(ctx, 'docker_target_recover', operator(ctx).recover(), True)
+        target = operator(ctx)
+        output = target.recover()
+        return record(ctx, 'docker_target_recover', output, target.did_write)
 
     def host_diagnostics(ctx: RunContext[Deps], kind: str) -> str:
         """读取固定宿主机指标；kind仅支持disk、inode、memory、load。"""
@@ -447,11 +461,13 @@ async def _drive(agent, runner, deps, prompt, history, deferred, max_loops):
 
             elif _PydanticAgent.is_call_tools_node(node):
                 executed = False
+                runner._docker_write_executed = False
                 async with node.stream(run.ctx) as handle_stream:
                     async for event in handle_stream:
                         if isinstance(event, FunctionToolCallEvent) \
-                                and event.part.tool_name in ({'ssh_exec'} | DOCKER_WRITE_TOOLS):
+                                and event.part.tool_name == 'ssh_exec':
                             executed = True
+                executed = executed or runner._docker_write_executed
                 # 修复模式：每批命令执行完立即复检，恢复了就不再继续消耗轮次
                 if executed and runner.verifier:
                     is_ok, message = await asyncio.to_thread(runner.verifier)

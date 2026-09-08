@@ -7,6 +7,7 @@ from apps.docker.client import (
     build_monitor_recover_command,
     build_monitor_restart_command,
     discover_all,
+    find_name_conflicts,
     read_service_hash,
 )
 from apps.monitor.docker import evaluate_target, parse_scope
@@ -53,6 +54,7 @@ class DockerTargetOperator:
     def __init__(self, host, raw_scope):
         self.host = host
         self.scope = parse_scope(raw_scope)
+        self.did_write = False
 
     def _discover(self):
         return discover_all(self.host)
@@ -95,6 +97,7 @@ class DockerTargetOperator:
         outputs = []
         for item in targets:
             command = build_monitor_restart_command(item['name'])
+            self.did_write = True
             code, output = _exec(self.host, command)
             outputs.append(f"{item['name']}: exit={code} {output or ''}".strip())
             if code:
@@ -109,7 +112,19 @@ class DockerTargetOperator:
         payload = self._discover()
         project = _project(self.scope, payload)
         if not project:
-            return 'Compose项目或配置路径已变化，禁止自动恢复。'
+            files = self.scope.get('config_files') or []
+            if not files:
+                return 'Compose配置路径缺失，禁止自动恢复。'
+            project = {
+                'name': self.scope['project'],
+                'workdir': self.scope['workdir'],
+                'config_file': files[0],
+                'config_files': files,
+                'containers': [],
+            }
+        if find_name_conflicts(
+                payload.get('projects') or [], project['name'], project['config_file']):
+            return '检测到同名Compose项目冲突，禁止自动恢复。'
         containers = self._containers(payload)
         expected = int(self.scope['expected_replicas'])
         if len(containers) >= expected:
@@ -126,6 +141,7 @@ class DockerTargetOperator:
             return '当前Compose配置哈希与监控基线不一致，禁止自动恢复。'
         command = build_monitor_recover_command(
             SimpleNamespace(**project), self.scope['service'], expected)
+        self.did_write = True
         code, output = _exec(self.host, command)
         return limit_output(f'exit={code}\n{output or ""}')
 

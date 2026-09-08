@@ -7,7 +7,8 @@ from django_redis import get_redis_connection
 from libs import json_response, JsonParser, Argument, human_datetime, auth
 from apps.monitor.models import Detection, AI_LOOP_LIMITS
 from apps.monitor.executors import dispatch
-from apps.monitor.docker import validate_and_normalize_scope
+from apps.monitor.docker import (
+    clear_repair_policy, repair_target_key, validate_and_normalize_scope)
 from apps.host.models import Host
 from apps.account.utils import has_host_perm
 from apps.docker.client import DockerClientError
@@ -108,15 +109,23 @@ class DetectionView(View):
             Argument('is_active', type=bool, required=False)
         ).parse(request.body, True)
         if error is None:
+            task = Detection.objects.filter(pk=form.id).first()
             Detection.objects.filter(pk=form.id).update(**form)
             if form.get('is_active') is not None:
+                rds_cli = get_redis_connection()
+                if task and task.type == '6':
+                    try:
+                        host_id = json.loads(task.targets)[0]
+                        clear_repair_policy(
+                            rds_cli, repair_target_key(host_id, task.extra))
+                    except Exception:
+                        pass
                 if form.is_active:
                     task = Detection.objects.filter(pk=form.id).first()
                     message = {'id': form.id, 'action': 'add'}
                     message.update(task.to_dict(selects=('targets', 'extra', 'rate', 'type', 'threshold', 'quiet')))
                 else:
                     message = {'id': form.id, 'action': 'remove'}
-                rds_cli = get_redis_connection()
                 rds_cli.lpush(settings.MONITOR_KEY, json.dumps(message))
         return json_response(error=error)
 
