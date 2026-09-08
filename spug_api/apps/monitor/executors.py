@@ -4,6 +4,7 @@
 from django_redis import get_redis_connection
 from apps.host.models import Host
 from apps.monitor.utils import handle_notify, handle_trigger_event, handle_ai_post_task
+from apps.monitor.docker import DetectionResult, check_target as check_docker_target
 from socket import socket
 import subprocess
 import ipaddress
@@ -155,16 +156,25 @@ def monitor_worker_handler(job):
 
 def dispatch(tp, addr, extra):
     if tp == '1':
-        return site_check(addr, extra)
+        result = site_check(addr, extra)
     elif tp == '2':
-        return port_check(addr, extra)
+        result = port_check(addr, extra)
     elif tp == '5':
-        return ping_check(addr)
+        result = ping_check(addr)
+    elif tp == '6':
+        host = Host.objects.filter(pk=addr).first()
+        if not host:
+            return DetectionResult(False, f'unknown host id for {addr!r}', 'infrastructure')
+        return check_docker_target(host, extra)
     elif tp == '3':
         command = f'ps -ef|grep -v grep|grep {extra!r}'
+        host = Host.objects.filter(pk=addr).first()
+        result = host_executor(host, command)
     elif tp == '4':
-        command = extra
+        host = Host.objects.filter(pk=addr).first()
+        result = host_executor(host, extra)
     else:
         raise TypeError(f'invalid monitor type: {tp!r}')
-    host = Host.objects.filter(pk=addr).first()
-    return host_executor(host, command)
+    if isinstance(result, DetectionResult):
+        return result
+    return DetectionResult(result[0], result[1], '' if result[0] else 'target')
