@@ -25,6 +25,7 @@ from pydantic_ai import (
     ToolDenied,
 )
 from pydantic_ai.messages import (
+    ModelRequest, ModelResponse, UserPromptPart, TextPart,
     FunctionToolCallEvent,
     PartDeltaEvent,
     PartStartEvent,
@@ -76,6 +77,10 @@ class Deps:
     mode: str = 'repair'
 
 
+class ChatStopped(Exception):
+    """用户主动停止，不作为模型调用失败处理。"""
+
+
 class AgentRunner:
     """统一驱动 PydanticAI 事件循环，并把过程翻译成 AgentRecord / SSE 事件。
 
@@ -92,10 +97,22 @@ class AgentRunner:
         self._verified = None      # 修复模式复检结果：True 表示故障已恢复
         self._verify_msg = ''
         self._docker_write_executed = False
+        self.partial_text = ''
+        self.resuming = False
+
+    def check_stop(self):
+        if not self.unattended:
+            from apps.ai import stream
+            if stream.stop_requested(self.session.id, self.session.turn):
+                raise ChatStopped()
 
     # ---------- 记录与事件 ----------
 
     def emit(self, event_type, **payload):
+        if event_type in ('delta_start', 'delta_reset'):
+            self.partial_text = ''
+        elif event_type == 'delta' and not payload.get('thinking'):
+            self.partial_text += payload.get('text', '')
         if not self.emit_enabled:
             return
         payload['type'] = event_type
@@ -123,6 +140,7 @@ class AgentRunner:
     # ---------- 命令执行 ----------
 
     def exec_command(self, ssh, command):
+        self.check_stop()
         try:
             exit_code, output = ssh.exec_command_raw(command)
         except Exception as e:
@@ -240,6 +258,7 @@ def _make_ssh_tool(runner):
     def ssh_exec(ctx: RunContext[Deps], command: str) -> str:
         """在目标服务器上执行一条 shell 命令，返回退出码与输出。"""
         deps = ctx.deps
+        deps.runner.check_stop()
         command = (command or '').strip()
         if not command:
             return '命令为空，请给出具体命令。'
@@ -363,6 +382,7 @@ def _make_mcp_tools(runner):
             schema.setdefault('properties', {})
 
             def _call(_server=server, _raw=raw_name, _label=None, **kwargs):
+                runner.check_stop()
                 label = f'{_server.name}/{_raw}'
                 runner.record('tool', label, extra={'arguments': kwargs})
                 try:
@@ -424,6 +444,24 @@ def build_agent(runner, instructions, with_ssh=True, with_tools=True):
 
 
 async def _drive(agent, runner, deps, prompt, history, deferred, max_loops):
+    if runner.unattended:
+        return await _drive_run(agent, runner, deps, prompt, history, deferred, max_loops)
+    await asyncio.to_thread(runner.check_stop)
+    task = asyncio.create_task(_drive_run(agent, runner, deps, prompt, history, deferred, max_loops))
+    try:
+        while not task.done():
+            await asyncio.to_thread(runner.check_stop)
+            await asyncio.wait({task}, timeout=0.3)
+        result = await task
+        await asyncio.to_thread(runner.check_stop)
+        return result
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+async def _drive_run(agent, runner, deps, prompt, history, deferred, max_loops):
     """驱动一次运行，把节点/事件翻译成记录与实时事件。
 
     返回 (run, stopped_by_verifier)。达到轮次上限时提前结束，
@@ -511,6 +549,7 @@ def _run_in_thread(coro_factory):
 
 def _finish_deferred(runner, run, deferred_output):
     """本次运行因高危命令挂起：保存现场，置为待确认。"""
+    runner.check_stop()
     session = runner.session
     approval = deferred_output.approvals[0]
     command = (approval.args_as_dict() or {}).get('command', '') \
@@ -530,6 +569,7 @@ def _finish_deferred(runner, run, deferred_output):
 
 
 def _settle_chat(runner, run, text):
+    runner.check_stop()
     session = runner.session
     runner.save_history(_run_messages(run))
     if not text:
@@ -556,6 +596,7 @@ def run_chat(session, question):
     from apps.ai.client import AIError
     runner = AgentRunner(session, emit=True, unattended=False)
     try:
+        runner.check_stop()
         if session.mode == 'chat' or not session.host_id:
             return _plain_chat(runner, question)
         deps = Deps(session=session, runner=runner, mode='agent', unattended=False)
@@ -572,6 +613,8 @@ def run_chat(session, question):
         if isinstance(output, DeferredToolRequests):
             return _finish_deferred(runner, run, output)
         return _settle_chat(runner, run, output)
+    except ChatStopped:
+        return _stop_chat(runner)
     except AIError as e:
         runner.record('error', str(e))
         return _abort_chat(runner, f'AI调用失败：{e}')
@@ -588,6 +631,7 @@ def resume_chat(session, approved):
     if not pending:
         return session
     runner = AgentRunner(session, emit=True, unattended=False)
+    runner.resuming = True
     session.pending = None
     session.status = 'running'
     session.save(update_fields=['pending', 'status'])
@@ -612,6 +656,8 @@ def resume_chat(session, approved):
         if isinstance(output, DeferredToolRequests):
             return _finish_deferred(runner, run, output)
         return _settle_chat(runner, run, output)
+    except ChatStopped:
+        return _stop_chat(runner)
     except AIError as e:
         runner.record('error', str(e))
         return _abort_chat(runner, f'AI调用失败：{e}')
@@ -634,6 +680,34 @@ def _plain_chat(runner, question):
     if isinstance(output, DeferredToolRequests):
         return _finish_deferred(runner, run, output)
     return _settle_chat(runner, run, output)
+
+
+def _stop_chat(runner):
+    session = runner.session
+    text = (runner.partial_text.rstrip() + '\n\n' if runner.partial_text.strip() else '')
+    text += '已停止生成。' if session.mode == 'chat' else '已停止。已发出的服务器命令不会撤销。'
+    history = runner.load_history() or []
+    if runner.resuming:
+        # 审批续跑的历史末尾含未配对工具调用，用当前轮的执行记录替换，避免下次请求失效。
+        for index in range(len(history) - 1, -1, -1):
+            if isinstance(history[index], ModelRequest) and any(
+                    isinstance(part, UserPromptPart) for part in history[index].parts):
+                history = history[:index]
+                break
+    records = session.records.filter(turn=session.turn).order_by('id')
+    transcript = '\n'.join(f'[{item.kind}] {item.content[:4000]}' for item in records)[:20000]
+    history.extend([
+        ModelRequest(parts=[UserPromptPart('本轮提问及中断前的执行记录：\n' + transcript)]),
+        ModelResponse(parts=[TextPart(text)]),
+    ])
+    runner.save_history(history)
+    runner.record('answer', text, extra={'stopped': True})
+    session.status = 'idle'
+    session.pending = None
+    session.finished_at = human_datetime()
+    session.save(update_fields=['status', 'pending', 'finished_at'])
+    runner.emit('done', status='idle', stopped=True)
+    return session
 
 
 def _abort_chat(runner, message):

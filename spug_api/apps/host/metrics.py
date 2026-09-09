@@ -3,7 +3,7 @@
 # Released under the AGPL-3.0 License.
 """主机实时指标探针。
 
-通过已有 SSH 通道执行一条只读命令采集 CPU / GPU / 内存 / 磁盘指标，
+通过已有 SSH 通道执行一条只读命令采集 CPU / GPU / 内存 / 磁盘 / 温度指标，
 不向目标主机写入任何文件、不安装任何 agent、不产生常驻进程。
 
 CPU 使用率依赖两次 /proc/stat 采样的差值。为把对被探测主机的影响降到最低，
@@ -42,7 +42,29 @@ NET_SAMPLE_INTERVAL = 1
 
 # nvidia-smi 常见安装位置。exec_command 是非交互式 shell，不会加载 /etc/profile
 # 或 ~/.bashrc，PATH 往往只有最小集合，仅靠 command -v 会漏掉容器与自定义安装。
-GPU_PROBE = r'''
+HARDWARE_PROBE = r'''
+echo SPUG_PROBE_TEMP
+for _T in /sys/class/thermal/thermal_zone*/temp \
+          /sys/class/hwmon/hwmon*/temp*_input; do
+  [ -r "$_T" ] || continue
+  _V=$(cat "$_T" 2>/dev/null) || continue
+  case "$_V" in ''|*[!0-9]*) continue ;; esac
+
+  _D=${_T%/*}
+  _B=${_T##*/}
+  _N=${_B%_input}
+  if [ -r "$_D/${_N}_label" ]; then
+    _L=$(cat "$_D/${_N}_label" 2>/dev/null)
+  elif [ -r "$_D/type" ]; then
+    _L=$(cat "$_D/type" 2>/dev/null)
+  elif [ -r "$_D/name" ]; then
+    _L=$(cat "$_D/name" 2>/dev/null)
+    _L="${_L}:${_N}"
+  else
+    _L=$_N
+  fi
+  printf '%s|%s\n' "$_L" "$_V"
+done
 echo SPUG_PROBE_GPU
 _NS=""
 for _P in nvidia-smi /usr/bin/nvidia-smi /usr/local/bin/nvidia-smi \
@@ -52,10 +74,10 @@ done
 if [ -n "$_NS" ]; then
   # 驱动异常时 nvidia-smi 可能长时间挂起，加超时避免拖死整次采集
   if command -v timeout >/dev/null 2>&1; then
-    timeout 3 "$_NS" --query-gpu=utilization.gpu,memory.used,memory.total \
+    timeout 3 "$_NS" --query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu \
       --format=csv,noheader,nounits 2>/dev/null
   else
-    "$_NS" --query-gpu=utilization.gpu,memory.used,memory.total \
+    "$_NS" --query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu \
       --format=csv,noheader,nounits 2>/dev/null
   fi
 fi
@@ -75,7 +97,7 @@ echo SPUG_PROBE_NET
 cat /proc/net/dev
 echo SPUG_PROBE_DISK
 df -kP -x tmpfs -x devtmpfs -x overlay -x squashfs 2>/dev/null | tail -n +2
-''' + GPU_PROBE
+''' + HARDWARE_PROBE
 
 # 后续采集：只取单样本与服务端缓存的快照做差值，远端无 sleep
 PROBE_COMMAND_FAST = r'''
@@ -86,7 +108,7 @@ cat /proc/net/dev
 echo SPUG_PROBE_STAT2
 echo SPUG_PROBE_DISK
 df -kP -x tmpfs -x devtmpfs -x overlay -x squashfs 2>/dev/null | tail -n +2
-''' + GPU_PROBE
+''' + HARDWARE_PROBE
 
 
 def _parse_cpu_line(line):
@@ -139,11 +161,15 @@ def _parse_output(output, prev_stat=None):
     返回 (result, cur_stat, cur_net)，cur_stat/cur_net 供调用方缓存，
     供下次差值使用。network 为 None 时表示需要调用方用快照计算。
     """
-    result = {'cpu': None, 'memory': None, 'swap': None, 'disk': [], 'gpu': [], 'network': None}
+    result = {
+        'cpu': None, 'memory': None, 'swap': None, 'disk': [], 'gpu': [],
+        'network': None, 'temperature': None,
+    }
     try:
         head_all, stat2_part = output.split('SPUG_PROBE_STAT2', 1)
         stat2_all, disk_part = stat2_part.split('SPUG_PROBE_DISK', 1)
-        disk_lines, gpu_lines = disk_part.split('SPUG_PROBE_GPU', 1)
+        disk_lines, hardware_part = disk_part.split('SPUG_PROBE_TEMP', 1)
+        temperature_lines, gpu_lines = hardware_part.split('SPUG_PROBE_GPU', 1)
     except ValueError:
         return result, None, None
     # 网络采样紧跟在 CPU/内存之后；双样本模式下 STAT2 段里还有第二份
@@ -221,18 +247,46 @@ def _parse_output(output, prev_stat=None):
                 'percent': round(used_kb / total_kb * 100, 1),
             })
 
+    sensors = []
+    for line in temperature_lines.strip().splitlines():
+        name, separator, raw_value = line.rpartition('|')
+        if not separator:
+            continue
+        try:
+            value = float(raw_value)
+        except ValueError:
+            continue
+        # Linux sysfs 通常使用千分之一摄氏度；同时兼容少数直接返回摄氏度的驱动。
+        if value > 1000:
+            value /= 1000
+        if 0 <= value <= 250:
+            sensors.append({'name': name.strip() or 'unknown', 'value': round(value, 1)})
+    if sensors:
+        result['temperature'] = {
+            'max': max(item['value'] for item in sensors),
+            'sensors': sensors,
+        }
+
     for line in gpu_lines.strip().splitlines():
         fields = [x.strip() for x in line.split(',')]
-        if len(fields) == 3:
+        if len(fields) >= 3:
             try:
                 util, mem_used, mem_all = float(fields[0]), float(fields[1]), float(fields[2])
             except ValueError:
                 continue
-            result['gpu'].append({
+            item = {
                 'percent': round(util, 1),
                 'memory_used': round(mem_used / 1024, 1),  # GB
                 'memory_total': round(mem_all / 1024, 1),
-            })
+            }
+            if len(fields) >= 4:
+                try:
+                    temperature = float(fields[3])
+                    if 0 <= temperature <= 250:
+                        item['temperature'] = round(temperature, 1)
+                except ValueError:
+                    pass
+            result['gpu'].append(item)
     return result, cur_stat, cur_net
 
 

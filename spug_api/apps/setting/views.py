@@ -173,8 +173,8 @@ def email_test(request):
             mail = Mail(**form)
             mail.send_text_mail(
                 [form.username],
-                'Spug 邮件服务测试',
-                '这是一封来自 Spug 的测试邮件，收到此邮件表示邮件服务配置正常。',
+                'Moon 邮件服务测试',
+                '这是一封来自 Moon 的测试邮件，收到此邮件表示邮件服务配置正常。',
             )
             return json_response()
         except Exception as e:

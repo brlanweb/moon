@@ -7,6 +7,7 @@ import { observable, computed } from 'mobx';
 import { http, includes } from 'libs';
 import moment from 'moment';
 import lds from 'lodash';
+import {resourceDefaults} from './resource';
 
 class Store {
   autoReload = null;
@@ -41,6 +42,18 @@ class Store {
     if (this.f_name) records = records.filter(x => includes(x.name, this.f_name));
     return records
   }
+
+  recordsFor = (resourceOnly = false) => this.dataSource.filter(x => (x.type === '7') === resourceOnly);
+
+  overviewsFor = (resourceOnly = false) => {
+    // Overview types are translated labels; join the stable detection ID instead.
+    const ids = new Set(this.records.filter(x => (x.type === '7') === resourceOnly).map(x => String(x.id)));
+    return this.ovDataSource.filter(x => ids.has(String(x.id).split('_')[0]));
+  };
+
+  typesFor = (resourceOnly = false) => Array.from(new Set(
+    this.records.filter(x => (x.type === '7') === resourceOnly).map(x => x.type_alias)
+  ));
 
   @computed get cascaderOptions() {
     let data = {}
@@ -84,11 +97,13 @@ class Store {
       })
   }
 
-  showForm = (info) => {
+  showForm = (info, resourceOnly = false) => {
     if (info) {
       this.record = lds.cloneDeep(info)
-    } else if (this.record.id || !this.record.type) {
-      this.record = {type: '1', targets: []}
+    } else if (this.record.id || !this.record.type || (this.record.type === '7') !== resourceOnly) {
+      this.record = resourceOnly
+        ? {type: '7', targets: [], extra: resourceDefaults(), ai_mode: ''}
+        : {type: '1', targets: []}
     }
     this.page = 0;
     this.formVisible = true;

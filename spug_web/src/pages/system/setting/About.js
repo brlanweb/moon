@@ -32,9 +32,9 @@ class About extends React.Component {
             key: 'new_version',
             duration: 0,
             top: 88,
-            message: t('发现新版本 {}', res.version),
+            message: t('发现上游新版本 {}', res.version),
             icon: <SmileTwoTone/>,
-            btn: <a target="_blank" rel="noopener noreferrer" href="https://spug.cc/docs/update-version/">{t('如何升级？')}</a>,
+            btn: <a target="_blank" rel="noopener noreferrer" href="https://spug.cc/docs/update-version/">{t('上游升级说明')}</a>,
             description: <pre style={{lineHeight: '30px'}}>{res.content}<br/>{res.extra}</pre>
           })
         } else if (res.extra) {
@@ -42,7 +42,7 @@ class About extends React.Component {
             key: 'new_version',
             duration: 0,
             top: 88,
-            message: t('已是最新版本'),
+            message: t('上游版本已是最新'),
             icon: <SmileTwoTone/>,
             btn: <Button type="link" onClick={() => notification.close('new_version')}>{t('知道了')}</Button>,
             description: <pre style={{lineHeight: '30px'}}>{res.extra}</pre>
@@ -61,18 +61,18 @@ class About extends React.Component {
           <Descriptions.Item label={t('操作系统')}>{info['system_version']}</Descriptions.Item>
           <Descriptions.Item label={t('Python版本')}>{info['python_version']}</Descriptions.Item>
           <Descriptions.Item label={t('Django版本')}>{info['django_version']}</Descriptions.Item>
-          <Descriptions.Item label={t('Spug API版本')}>{info['spug_version']}</Descriptions.Item>
-          <Descriptions.Item label={t('Spug Web版本')}>{VERSION}</Descriptions.Item>
-          <Descriptions.Item label={t('官网文档')}>
-            <a href="https://spug.cc" target="_blank" rel="noopener noreferrer">https://spug.cc</a>
+          <Descriptions.Item label={t('Moon API版本')}>{info['spug_version']}</Descriptions.Item>
+          <Descriptions.Item label={t('Moon Web版本')}>{VERSION}</Descriptions.Item>
+          <Descriptions.Item label={t('上游项目')}>
+            <a href="https://spug.cc" target="_blank" rel="noopener noreferrer">{t('上游项目')}</a>
           </Descriptions.Item>
-          <Descriptions.Item label={t('更新日志')}>
+          <Descriptions.Item label={t('上游更新日志')}>
             <a href="https://spug.cc/docs/change-log/" target="_blank"
-               rel="noopener noreferrer">https://spug.cc/docs/change-log/</a>
+               rel="noopener noreferrer">{t('上游更新日志')}</a>
           </Descriptions.Item>
         </Descriptions>
         {info['spug_version'] !== VERSION && (
-          <Alert showIcon style={{width: 500}} type="warning" message={t('Spug API版本与Web版本不匹配，请尝试刷新浏览器后再次查看。')}/>
+          <Alert showIcon style={{width: 500}} type="warning" message={t('Moon API版本与Web版本不匹配，请尝试刷新浏览器后再次查看。')}/>
         )}
       </Spin>
     )

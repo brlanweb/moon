@@ -9,7 +9,7 @@ import os
 
 
 class Command(BaseCommand):
-    help = '升级Spug版本'
+    help = '使用上游项目发行包更新 Moon（会覆盖定制内容）'
 
     def handle(self, *args, **options):
         version, is_repair = settings.SPUG_VERSION, False

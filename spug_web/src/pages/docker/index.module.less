@@ -6,6 +6,8 @@
 }
 
 .sidebar {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   padding: 16px 14px;
   border-right: 1px solid #e5e7eb;
@@ -27,7 +29,10 @@
 .sidebarHeader :global(.anticon) { margin-right: 7px; }
 .hostSelect { width: 100%; }
 .listHeader { display: flex; align-items: center; justify-content: space-between; height: 42px; margin-top: 8px; color: #667085; font-size: 13px; }
-.projectList { overflow-y: auto; height: calc(100vh - 462px); min-height: 120px; }
+.projectSpin { flex: 1; min-height: 0; overflow: hidden; }
+.projectSpin :global(.ant-spin-container) { height: 100%; }
+.projectList { overflow-y: auto; height: 100%; }
+.sidebarHeader, .hostSelect, .listHeader, .resourceNav { flex-shrink: 0; }
 .resourceNav { border-top: 1px solid #f0f1f3; }
 .resourceNav .project, .resourceNav .activeProject { min-height: 40px; padding: 10px; }
 .resourceNav button:disabled { cursor: not-allowed; opacity: .45; }
@@ -64,7 +69,12 @@
 .toolbar { flex: none; padding: 12px 0; }
 /* 容器表最多占四成高度，超出内部滚动，保证日志区始终有足够空间 */
 .containers { flex: none; max-height: 38%; overflow: auto; background: #fff; border: 1px solid #e5e7eb; border-radius: 6px; }
-.resourcePanel { flex: 1; min-height: 0; overflow: auto; margin-top: 16px; padding: 12px; background: #fff; border: 1px solid #e5e7eb; border-radius: 6px; }
+.resourcePage { display: flex; flex-direction: column; padding: 0 22px 18px; }
+.resourceHostSelect { width: 320px; max-width: 100%; }
+.resourcePanel { flex: 1; min-height: 0; overflow: auto; padding-top: 12px; }
+.resourcePage .header { gap: 12px; flex-wrap: wrap; }
+.resourcePage .header h2 { font-size: 18px; }
+.resourcePanel :global(.ant-table) { background: #fff; }
 
 .editorArea { flex: 1; min-height: 240px; margin-top: 14px; display: flex; flex-direction: column; }
 .configBar { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
@@ -101,5 +111,19 @@
 @media (max-width: 900px) {
   .page { grid-template-columns: 220px minmax(0, 1fr); }
   .content { padding: 0 12px 14px; }
-  .header { align-items: flex-start; gap: 10px; padding: 14px 0; }
+  .header { align-items: flex-start; gap: 10px; padding: 14px 0; flex-wrap: wrap; }
+  .resourcePage { padding: 0 12px 14px; }
+}
+
+@media (max-width: 600px) {
+  .page:not(.resourcePage) { grid-template-columns: minmax(0, 1fr); height: auto; min-height: calc(100vh - 64px); }
+  .sidebar { max-height: 280px; border-right: 0; border-bottom: 1px solid #e5e7eb; }
+  .projectSpin { flex: 1 1 100px; }
+  .content { overflow: auto; }
+  .header h2, .header > div { min-width: 0; overflow-wrap: anywhere; }
+  .header > :global(.ant-space) { flex-wrap: wrap; }
+  .configBar { flex-wrap: wrap; }
+  .configBar > :global(.ant-select) { min-width: 0 !important; max-width: 100% !important; width: 100%; }
+  .editorArea { min-height: 380px; }
+  .resourceHostSelect { width: 100%; }
 }

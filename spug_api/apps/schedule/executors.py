@@ -58,7 +58,7 @@ def host_executor(host, command):
         # 退出状态缺失通常意味着命令被切断（例如 docker logs -f 这类不会自行退出的命令）。
         # 输出可能是完整的，这里显式说明，避免用户看到「失败」却找不到失败原因。
         out = (out or '') + (
-            '\n\n[Spug] 连接已结束但未收到命令退出状态，'
+            '\n\n[Moon] 连接已结束但未收到命令退出状态，'
             '执行结果可能不完整。常见于不会自行退出的命令（如 docker logs -f、tail -f）。')
     return code, round(time.time() - now, 3), out
 

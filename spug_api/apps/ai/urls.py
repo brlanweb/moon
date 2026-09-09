@@ -5,7 +5,7 @@ from django.urls import path
 
 from apps.ai.views import (
     ModelView, SessionView, McpView, SkillView, test_model, test_mcp,
-    session_chat, session_confirm, session_stream,
+    session_chat, session_confirm, session_stream, session_stop,
 )
 
 urlpatterns = [
@@ -16,6 +16,7 @@ urlpatterns = [
     path('skill/', SkillView.as_view()),
     path('session/', SessionView.as_view()),
     path('session/chat/', session_chat),
+    path('session/stop/', session_stop),
     path('session/confirm/', session_confirm),
     path('session/stream/', session_stream),
 ]

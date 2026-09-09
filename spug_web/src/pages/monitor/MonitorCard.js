@@ -47,7 +47,7 @@ function CardItem(props) {
   )
 }
 
-function MonitorCard() {
+function MonitorCard({resourceOnly = false}) {
   const [autoReload, setAutoReload] = useState(false);
   const [status, setStatus] = useState();
 
@@ -65,7 +65,8 @@ function MonitorCard() {
     setAutoReload(!autoReload)
   }
 
-  const filteredRecords = store.ovDataSource.filter(x => !status || x.status === status)
+  const records = store.overviewsFor(resourceOnly);
+  const filteredRecords = records.filter(x => !status || x.status === status)
   return (
     <Card title={t('总览')} style={{marginBottom: 24}} bodyStyle={{padding: '12px 24px'}} extra={(
       <Space size="middle">
@@ -82,7 +83,7 @@ function MonitorCard() {
           <div>{t('类型：')}</div>
           <Select allowClear style={{width: 120}} value={store.f_type} onChange={v => store.f_type = v}
                   placeholder={t('请选择')}>
-            {store.types.map(item => <Select.Option key={item} value={item}>{item}</Select.Option>)}
+            {store.typesFor(resourceOnly).map(item => <Select.Option key={item} value={item}>{item}</Select.Option>)}
           </Select>
         </Space>
         <Space>
@@ -94,14 +95,14 @@ function MonitorCard() {
       <Spin spinning={store.ovFetching}>
         <div className={styles.header}>
           {Object.entries(StyleMap).map(([s, style]) => {
-            const count = store.ovDataSource.filter(x => x.status === s).length;
+            const count = records.filter(x => x.status === s).length;
             return count ? (
               <Tooltip key={s} title={StatusMap[s]}>
                 <div
                   className={styles.item}
                   style={s === status ? style : {...style, background: '#fff'}}
                   onClick={() => setStatus(s === status ? '' : s)}>
-                  {store.ovDataSource.filter(x => x.status === s).length}
+                  {records.filter(x => x.status === s).length}
                 </div>
               </Tooltip>
             ) : null

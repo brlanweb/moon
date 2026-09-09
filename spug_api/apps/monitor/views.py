@@ -4,11 +4,12 @@
 from django.views.generic import View
 from django.conf import settings
 from django_redis import get_redis_connection
-from libs import json_response, JsonParser, Argument, human_datetime, auth
+from libs import json_response, JsonParser, Argument, AttrDict, human_datetime, auth
 from apps.monitor.models import Detection, AI_LOOP_LIMITS
 from apps.monitor.executors import dispatch
 from apps.monitor.docker import (
     clear_repair_policy, repair_target_key, validate_and_normalize_scope)
+from apps.monitor.resource import parse_config, validate_payload
 from apps.host.models import Host
 from apps.account.utils import has_host_perm
 from apps.docker.client import DockerClientError
@@ -37,21 +38,74 @@ def prepare_docker_form(user, form):
     return None
 
 
+def prepare_resource_form(user, form):
+    try:
+        validate_payload(form)
+    except ValueError as exc:
+        return str(exc)
+    if not has_host_perm(user, form.targets):
+        return '无权访问所选资源监控主机'
+    hosts = list(Host.objects.filter(pk__in=form.targets))
+    if len(hosts) != len(form.targets):
+        return '所选资源监控主机不存在'
+    if any(not host.is_verified for host in hosts):
+        return '资源监控主机尚未验证'
+    if form.get('ai_mode'):
+        if len(form.targets) != 1:
+            return '启用AI处理的资源监控必须且只能选择一台主机'
+        form.ai_host_id = form.targets[0]
+    form.extra = json.dumps(parse_config(form.extra), ensure_ascii=False, allow_nan=False)
+    return None
+
+
+def parse_monitor_payload(body):
+    try:
+        payload = json.loads(body)
+        if not isinstance(payload, dict):
+            raise ValueError('请求必须为JSON对象')
+        if payload.get('type') == '7':
+            validate_payload(payload)
+        return payload, None
+    except (TypeError, ValueError) as exc:
+        return None, str(exc)
+
+
+def resource_target_names(detections):
+    ids = {host_id for item in detections if item.type == '7'
+           for host_id in json.loads(item.targets)}
+    names = {str(host_id): f'主机(id={host_id})不存在或已被删除' for host_id in ids}
+    if ids:
+        for host in Host.objects.filter(pk__in=ids):
+            names[str(host.id)] = f'{host.name}({host.hostname})'
+    return names
+
+
 class DetectionView(View):
     @auth('dashboard.dashboard.view|monitor.monitor.view')
     def get(self, request):
         detections = Detection.objects.all()
         groups = [x['group'] for x in detections.order_by('group').values('group').distinct()]
-        return json_response({'groups': groups, 'detections': [x.to_view() for x in detections]})
+        names = resource_target_names(detections)
+        rows = []
+        for item in detections:
+            row = item.to_view()
+            if item.type == '7':
+                row['target_names'] = {str(key): names[str(key)] for key in row['targets']}
+            rows.append(row)
+        return json_response({'groups': groups, 'detections': rows})
 
     @auth('monitor.monitor.add|monitor.monitor.edit')
     def post(self, request):
+        payload, error = parse_monitor_payload(request.body)
+        if error is not None:
+            return json_response(error=error)
         form, error = JsonParser(
             Argument('id', type=int, required=False),
             Argument('name', help='请输入任务名称'),
             Argument('group', help='请选择任务分组'),
             Argument('targets', type=list, filter=lambda x: len(x), help='请输入监控地址'),
-            Argument('type', filter=lambda x: x in dict(Detection.TYPES), help='请选择监控类型'),
+            Argument('type', filter=lambda x: isinstance(x, str) and x in dict(Detection.TYPES),
+                     help='请选择监控类型'),
             Argument('extra', required=False),
             Argument('desc', required=False),
             Argument('rate', type=int, default=5),
@@ -63,9 +117,11 @@ class DetectionView(View):
                      help='请选择正确的AI前置任务类型'),
             Argument('ai_host_id', type=int, required=False),
             Argument('ai_max_loops', type=int, required=False),
-        ).parse(request.body)
+        ).parse(payload)
         if error is None and form.type == '6':
             error = prepare_docker_form(request.user, form)
+        if error is None and form.type == '7':
+            error = prepare_resource_form(request.user, form)
         if error is None:
             # 报警方式不做任何前置拦截：渠道未配置时由 libs/spug.py 在实际发送阶段
             # 给出站内通知，配置保存本身不再被阻断。
@@ -110,6 +166,17 @@ class DetectionView(View):
         ).parse(request.body, True)
         if error is None:
             task = Detection.objects.filter(pk=form.id).first()
+            if task and task.type == '7' and form.get('is_active') is True:
+                try:
+                    resource_form = AttrDict(
+                        targets=json.loads(task.targets), extra=task.extra,
+                        rate=task.rate, threshold=task.threshold, quiet=task.quiet,
+                        ai_mode=task.ai_mode)
+                    error = prepare_resource_form(request.user, resource_form)
+                except (TypeError, ValueError) as exc:
+                    error = str(exc)
+                if error is not None:
+                    return json_response(error=error)
             Detection.objects.filter(pk=form.id).update(**form)
             if form.get('is_active') is not None:
                 rds_cli = get_redis_connection()
@@ -145,17 +212,27 @@ class DetectionView(View):
 
 @auth('monitor.monitor.add|monitor.monitor.edit')
 def run_test(request):
+    payload, error = parse_monitor_payload(request.body)
+    if error is not None:
+        return json_response(error=error)
     form, error = JsonParser(
-        Argument('type', help='请选择监控类型'),
+        Argument('type', filter=lambda x: isinstance(x, str) and x in dict(Detection.TYPES),
+                 help='请选择监控类型'),
         Argument('targets', type=list, filter=lambda x: len(x), help='请输入监控地址'),
         Argument('extra', required=False)
-    ).parse(request.body)
+    ).parse(payload)
     if error is None and form.type == '6':
         form.ai_mode = ''
         error = prepare_docker_form(request.user, form)
+    if error is None and form.type == '7':
+        error = prepare_resource_form(request.user, form)
     if error is None:
-        is_success, message = dispatch(form.type, form.targets[0], form.extra)
-        return json_response({'is_success': is_success, 'message': message})
+        result = dispatch(form.type, form.targets[0], form.extra)
+        is_success, message = result
+        data = {'is_success': is_success, 'message': message}
+        if form.type == '7':
+            data.update(failure_kind=result.failure_kind, details=result.details)
+        return json_response(data)
     return json_response(error=error)
 
 
@@ -163,7 +240,9 @@ def run_test(request):
 def get_overview(request):
     response = []
     rds = get_redis_connection()
-    for item in Detection.objects.all():
+    detections = list(Detection.objects.all())
+    names = resource_target_names(detections)
+    for item in detections:
         data = {}
         for key in json.loads(item.targets):
             key = str(key)
@@ -172,7 +251,7 @@ def get_overview(request):
                 'group': item.group,
                 'name': item.name,
                 'type': item.get_type_display(),
-                'target': key,
+                'target': names[key] if item.type == '7' else key,
                 'desc': item.desc,
                 'status': '0',
                 'latest_run_time': item.latest_run_time,

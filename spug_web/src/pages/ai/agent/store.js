@@ -7,12 +7,14 @@ import { observable, computed } from 'mobx';
 import http from 'libs/http';
 import { X_TOKEN } from 'libs/functools';
 
-class Store {
+export class Store {
   @observable sessions = [];
   @observable current = null;      // 当前会话详情（含 records）
   @observable hosts = [];
   @observable isFetching = false;
   @observable sending = false;
+  @observable stopping = false;
+  @observable canStop = false;
   @observable streaming = '';      // 模型正在输出的增量文本
   @observable pending = null;      // 待用户确认的高危命令
 
@@ -21,6 +23,8 @@ class Store {
   @observable f_word = '';
 
   es = null;                       // EventSource 实例
+  detailVersion = 0;
+  deleting = new Set();
 
   @computed get sessionList() {
     if (!this.f_word) return this.sessions;
@@ -37,7 +41,7 @@ class Store {
     this.isFetching = true;
     return http.get('/api/ai/session/')
       .then(res => {
-        this.sessions = res;
+        this.sessions = res.filter(item => !this.deleting.has(item.id));
         return res
       })
       .finally(() => this.isFetching = false)
@@ -49,8 +53,10 @@ class Store {
   };
 
   fetchDetail = (id, syncSelection = true) => {
+    const version = ++this.detailVersion;
     return http.get('/api/ai/session/', {params: {id}})
       .then(res => {
+        if (version !== this.detailVersion || this.deleting.has(id)) return null;
         this.current = res;
         // 轮询刷新时不要覆盖用户正在调整的模式与服务器选择
         if (syncSelection) {
@@ -64,16 +70,29 @@ class Store {
   };
 
   selectSession = (item) => {
-    if (this.current && this.current.id === item.id) return;
+    if (this.current && this.current.id === item.id) return Promise.resolve(this.current);
     this.closeStream();
     this.sending = false;
+    this.stopping = false;
+    this.canStop = false;
     this.streaming = '';
     this.pending = null;
     return this.fetchDetail(item.id).then(res => {
       // 会话仍在执行中（如告警自动修复），继续跟随其实时输出
-      if (res.status === 'running') this.openStream(res.id, 0);
+      if (res && res.status === 'running') this.openStream(res.id, 0);
       return res
     })
+  };
+
+  startNewSession = () => {
+    this.detailVersion += 1;
+    this.closeStream();
+    this.current = null;
+    this.sending = false;
+    this.stopping = false;
+    this.canStop = false;
+    this.streaming = '';
+    this.pending = null;
   };
 
   newSession = () => {
@@ -91,6 +110,8 @@ class Store {
 
   send = (question) => {
     this.sending = true;
+    this.canStop = false;
+    this.stopping = false;
     this.streaming = '';
     this.pending = null;
     const prepare = this.current && this.current.id
@@ -109,13 +130,21 @@ class Store {
           question,
           mode: this.mode,
           host_id: this.mode === 'chat' ? null : this.hostId,
-        }).then(() => session.id)
+        }).then(res => {
+          if (this.current && this.current.id === session.id) {
+            this.current.turn = res.turn;
+            this.current.status = res.status;
+          }
+          return session.id;
+        })
       })
       .then(sessionId => this.openStream(sessionId))
       .catch(err => {
         this.sending = false;
-        this.current.records = (this.current.records || [])
-          .filter(x => String(x.id).indexOf('tmp-') !== 0);
+        if (this.current) {
+          this.current.records = (this.current.records || [])
+            .filter(x => String(x.id).indexOf('tmp-') !== 0);
+        }
         return Promise.reject(err)
       })
   };
@@ -123,18 +152,22 @@ class Store {
   /** 建立 SSE 连接，实时接收模型增量与命令执行事件
    *  grace: 会话尚未进入 running 时，允许服务端多等几秒，避免竞态误判为已结束 */
   openStream = (sessionId, grace = 8) => {
+    if (!this.current || this.current.id !== sessionId) return Promise.resolve();
     this.closeStream();
     this.sending = true;
+    this.canStop = this.current.source === 'manual' && Number.isInteger(this.current.turn);
     return new Promise(resolve => {
       const url = `/api/ai/session/stream/?id=${sessionId}&grace=${grace}&x-token=${X_TOKEN}`;
       const es = new EventSource(url);
       this.es = es;
       let settled = false;
       const finish = () => {
-        if (settled) return;
+        if (settled || this.es !== es) return;
         settled = true;
         this.closeStream();
         this.sending = false;
+        this.stopping = false;
+        this.canStop = false;
         this.streaming = '';
         // 收尾时拉一次完整详情，保证记录与服务端一致
         this.fetchDetail(sessionId, false)
@@ -143,6 +176,7 @@ class Store {
       };
 
       es.onmessage = (e) => {
+        if (this.es !== es) return;
         let event;
         try {
           event = JSON.parse(e.data)
@@ -192,6 +226,26 @@ class Store {
     }
   };
 
+  stop = () => {
+    if (!this.canStop || this.stopping || !this.current) return Promise.resolve();
+    const {id, turn} = this.current;
+    this.stopping = true;
+    return http.post('/api/ai/session/stop/', {id, turn})
+      .then(res => {
+        if (!this.current || this.current.id !== id) return;
+        if (!res.stopping) {
+          this.closeStream();
+          this.sending = this.stopping = this.canStop = false;
+          this.streaming = '';
+          return this.fetchDetail(id, false);
+        }
+      })
+      .catch(err => {
+        if (this.current && this.current.id === id) this.stopping = false;
+        return Promise.reject(err);
+      })
+  };
+
   closeStream = () => {
     if (this.es) {
       this.es.close();
@@ -213,19 +267,40 @@ class Store {
   };
 
   removeSession = (id) => {
+    if (this.deleting.has(id)) return Promise.resolve();
+    const index = this.sessions.findIndex(item => item.id === id);
+    const session = this.sessions[index];
+    const selected = this.current && this.current.id === id;
+    if ((session && ['running', 'waiting'].includes(session.status)) ||
+        (selected && (this.sending || this.pending))) return Promise.resolve();
+    const previous = selected ? {current: this.current, mode: this.mode, hostId: this.hostId} : null;
+    this.deleting.add(id);
+    this.sessions = this.sessions.filter(item => item.id !== id);
+    if (selected) this.startNewSession();
+    const version = this.detailVersion;
     return http.delete('/api/ai/session/', {params: {id}})
-      .then(() => {
-        this.sessions = this.sessions.filter(x => x.id !== id);
-        if (this.current && this.current.id === id) this.current = null
+      .catch(err => {
+        // 只恢复被删除的一项，不覆盖等待期间新建或切换的会话。
+        if (session && !this.sessions.some(item => item.id === id)) {
+          this.sessions.splice(Math.min(index, this.sessions.length), 0, session);
+        }
+        if (previous && !this.current && this.detailVersion === version) {
+          Object.assign(this, previous);
+        }
+        return Promise.reject(err)
       })
+      .finally(() => this.deleting.delete(id))
   };
 
   reset = () => {
+    this.detailVersion += 1;
     this.closeStream();
     this.current = null;
     this.mode = 'chat';
     this.hostId = undefined;
     this.sending = false;
+    this.stopping = false;
+    this.canStop = false;
     this.streaming = '';
     this.pending = null
   }

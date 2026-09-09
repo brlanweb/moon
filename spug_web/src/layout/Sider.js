@@ -3,7 +3,7 @@ import { Layout, Menu } from 'antd';
 import { hasPermission, history } from 'libs';
 import styles from './layout.module.less';
 import routes from '../routes';
-import logo from './logo-spug-white.png';
+import MoonBrand from 'components/MoonBrand';
 
 let selectedKey = window.location.pathname;
 const OpenKeysMap = {};
@@ -34,7 +34,7 @@ export default function Sider(props) {
   function handleRoute(item) {
     if (item.auth && !hasPermission(item.auth)) return
     if (!item.title) return;
-    const menu = {label: item.title, key: item.path, icon: item.icon}
+    const menu = {label: item.title, key: item.path || item.title, icon: item.icon}
     if (item.child) {
       menu.children = []
       for (let sub of item.child) {
@@ -56,7 +56,7 @@ export default function Sider(props) {
   return (
     <Layout.Sider width={208} collapsed={props.collapsed} className={styles.sider}>
       <div className={styles.logo}>
-        <img src={logo} alt="Logo"/>
+        <MoonBrand compact={props.collapsed}/>
       </div>
       <div className={styles.menus} style={{height: `${document.body.clientHeight - 64}px`}}>
         <Menu

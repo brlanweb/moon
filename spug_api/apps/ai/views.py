@@ -410,12 +410,35 @@ def session_chat(request):
 
     # 清空上一轮的事件回放队列，避免 SSE 建连时把旧的 done/waiting 事件
     # 重播给前端，导致前端误判本轮已结束而提前断流（表现为第二轮“卡住”）
+    ai_stream.clear_stop(session.id, session.turn)
     ai_stream.reset(session.id)
     # ATOMIC_REQUESTS 开启时必须等事务提交后再启动后台线程，
     # 否则线程可能读不到刚落库的提问记录，或状态被事务提交覆盖回 running
     transaction.on_commit(
         lambda: Thread(target=run_chat, args=(session.id, form.question)).start())
     return json_response(session.to_view())
+
+
+@auth('ai.agent.do')
+def session_stop(request):
+    """请求中断当前轮次；执行线程退出后才释放会话，避免新旧任务重叠。"""
+    if request.method != 'POST':
+        return json_response(error='仅支持 POST 请求')
+    form, error = JsonParser(
+        Argument('id', type=int, help='参数错误'),
+        Argument('turn', type=int, help='请指定当前轮次'),
+    ).parse(request.body)
+    if error is not None:
+        return json_response(error=error)
+    session = AgentSession.objects.filter(pk=form.id).first()
+    if not session:
+        return json_response(error='未找到指定会话')
+    if session.source != 'manual':
+        return json_response(error='自动监控任务不支持在对话中停止')
+    if session.turn != form.turn or session.status != 'running':
+        return json_response({'stopping': False})
+    ai_stream.request_stop(session.id, session.turn)
+    return json_response({'stopping': True})
 
 
 @auth('ai.agent.do')
@@ -436,6 +459,7 @@ def session_confirm(request):
     session.status = 'running'
     session.save(update_fields=['status'])
     # 同上：清掉本轮已回放过的事件（含 waiting/confirm），避免确认后重播导致确认框复现
+    ai_stream.clear_stop(session.id, session.turn)
     ai_stream.reset(session.id)
     transaction.on_commit(
         lambda: Thread(target=resume_chat, args=(session.id, form.approve)).start())

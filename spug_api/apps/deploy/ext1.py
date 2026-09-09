@@ -97,7 +97,7 @@ def _deploy_ext1_host(req, helper, h_id, env):
             f'mkdir -p {extend.dst_repo} {base_dst_dir} && [ -e {extend.dst_dir} ] && [ ! -L {extend.dst_dir} ]')
         if code == 0:
             helper.send_error(host.id,
-                              f'\r\n检测到该主机的发布目录 {extend.dst_dir!r} 已存在，为了数据安全请自行备份后删除该目录，Spug 将会创建并接管该目录。')
+                              f'\r\n检测到该主机的发布目录 {extend.dst_dir!r} 已存在，为了数据安全请自行备份后删除该目录，Moon 将会创建并接管该目录。')
         if req.type == '2':
             helper.send_warn(h_id, '跳过√\r\n')
         else:

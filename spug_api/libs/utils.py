@@ -95,7 +95,7 @@ def wrap_python_command(command):
     return (
         'SPUG_PY=$(command -v python3 || command -v python)\n'
         'if [ -z "$SPUG_PY" ]; then\n'
-        '  echo "[Spug] python interpreter not found on this host" >&2\n'
+        '  echo "[Moon] python interpreter not found on this host" >&2\n'
         '  false\n'
         'else\n'
         f"$SPUG_PY << 'SPUG_PY_EOF'\n# -*- coding: UTF-8 -*-\n{command}\nSPUG_PY_EOF\n"

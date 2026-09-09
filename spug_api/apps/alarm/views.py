@@ -101,7 +101,7 @@ def handle_test(request):
         Argument('secret', required=False),
     ).parse(request.body)
     if error is None:
-        notify = Notification(None, '1', 'https://spug.cc', 'Spug官网（测试）', '这是一条测试告警信息', None)
+        notify = Notification(None, '1', 'https://spug.cc', '上游项目网站（Moon 测试告警）', '这是一条测试告警信息', None)
         if form.mode == '3':
             notify.monitor_by_dd([(form.value, form.secret)])
         elif form.mode == '4':

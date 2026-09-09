@@ -16,6 +16,21 @@ BACKLOG_MAX = 500
 BACKLOG_TTL = 3600
 
 
+STOP_KEY = 'spug:ai:stop:{}:{}'
+
+
+def request_stop(session_id, turn):
+    get_redis_connection().setex(STOP_KEY.format(session_id, turn), BACKLOG_TTL, '1')
+
+
+def stop_requested(session_id, turn):
+    return bool(get_redis_connection().exists(STOP_KEY.format(session_id, turn)))
+
+
+def clear_stop(session_id, turn):
+    get_redis_connection().delete(STOP_KEY.format(session_id, turn))
+
+
 def publish(session_id, event):
     """发布一个事件；event 为可 JSON 序列化的 dict。"""
     rds = get_redis_connection()

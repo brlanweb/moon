@@ -41,7 +41,7 @@ def _do_notify(task, mode, url, success, msg, analyzed, analysis_ok):
             f'**AI 分析：** {"完成" if analysis_ok else "异常"} ',
             f'**分析结果：** {description} ',
             f'**发生时间：** {human_datetime()} ',
-            '> 来自 Spug运维平台'
+            '> 来自 Moon运维平台'
         ]
         data = {
             'msgtype': 'markdown',
@@ -70,7 +70,7 @@ def _do_notify(task, mode, url, success, msg, analyzed, analysis_ok):
             f'AI 分析： {"完成" if analysis_ok else "异常"}',
             f'分析结果： {description}',
             f'发生时间： {human_datetime()}',
-            '> 来自 Spug运维平台'
+            '> 来自 Moon运维平台'
         ]
         data = {'msgtype': 'markdown', 'markdown': {'content': '\n'.join(texts)}}
         Notification.handle_request(url, data, 'wx')

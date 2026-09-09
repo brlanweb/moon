@@ -10,6 +10,7 @@ import { PlusOutlined } from '@ant-design/icons';
 import { Action, AuthButton, TableCard } from 'components';
 import { http, hasPermission, t } from 'libs';
 import store from './store';
+import {resourceThreshold, resourceTargets} from './resource';
 
 @observer
 class ComTable extends React.Component {
@@ -48,18 +49,18 @@ class ComTable extends React.Component {
   render() {
     return (
       <TableCard
-        tKey="mi"
+        tKey={this.props.resourceOnly ? 'monitor-resource' : 'mi'}
         rowKey="id"
-        title={t('监控任务')}
+        title={this.props.resourceOnly ? t('资源监控') : t('监控任务')}
         loading={store.isFetching}
-        dataSource={store.dataSource}
+        dataSource={store.recordsFor(this.props.resourceOnly)}
         onReload={store.fetchRecords}
         actions={[
           <AuthButton
             auth="monitor.monitor.add"
             type="primary"
             icon={<PlusOutlined/>}
-            onClick={() => store.showForm()}>{t('新建')}</AuthButton>,
+            onClick={() => store.showForm(undefined, this.props.resourceOnly)}>{t('新建')}</AuthButton>,
           <Radio.Group value={store.f_active} onChange={e => store.f_active = e.target.value}>
             <Radio.Button value="">{t('全部')}</Radio.Button>
             <Radio.Button value="1">{t('已激活')}</Radio.Button>
@@ -75,6 +76,8 @@ class ComTable extends React.Component {
         <Table.Column title={t('监控分组')} dataIndex="group"/>
         <Table.Column title={t('监控名称')} dataIndex="name"/>
         <Table.Column title={t('类型')} dataIndex="type_alias"/>
+        {this.props.resourceOnly && <Table.Column title={t('资源阈值')} dataIndex="extra" render={resourceThreshold}/>}
+        {this.props.resourceOnly && <Table.Column title={t('目标主机')} render={resourceTargets}/>}
         <Table.Column title={t('频率')} dataIndex="rate" render={value => t('{}分钟', value)}/>
         <Table.Column title={t('状态')} render={info => {
           if (info.is_active) {

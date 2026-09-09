@@ -34,6 +34,43 @@ function MetricLine(props) {
   )
 }
 
+function TemperatureLine({temperature, gpu}) {
+  const entries = ((temperature && temperature.sensors) || [])
+    .map(item => ({label: item.name, value: item.value}));
+  (gpu || []).forEach((item, index) => {
+    if (item.temperature !== null && item.temperature !== undefined) {
+      entries.push({label: `GPU ${index + 1}`, value: item.temperature})
+    }
+  });
+
+  if (!entries.length) {
+    return (
+      <Tooltip title={t('该主机未暴露温度传感器')}>
+        <div style={{display: 'flex', alignItems: 'center', lineHeight: '16px'}}>
+          <span style={{width: 36, fontSize: 11, color: '#888', flexShrink: 0}}>{t('温度')}</span>
+          <span style={{fontSize: 12, color: '#999'}}>--</span>
+        </div>
+      </Tooltip>
+    )
+  }
+
+  const highest = Math.max(...entries.map(item => item.value));
+  const color = highest >= 85 ? '#d9363e' : highest >= 70 ? '#faad14' : '#52c41a';
+  const details = entries
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 8)
+    .map(item => `${item.label}: ${item.value}°C`);
+
+  return (
+    <Tooltip title={details.join(' / ')}>
+      <div style={{display: 'flex', alignItems: 'center', lineHeight: '16px'}}>
+        <span style={{width: 36, fontSize: 11, color: '#888', flexShrink: 0}}>{t('温度')}</span>
+        <span style={{fontSize: 12, color, fontWeight: 500}}>{highest.toFixed(1)}°C</span>
+      </div>
+    </Tooltip>
+  )
+}
+
 function Metrics(props) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
@@ -109,6 +146,7 @@ function Metrics(props) {
           percent={disk.percent}
           title={`${disk.mount} ${disk.used}/${disk.total}GB`}/>
       )}
+      <TemperatureLine temperature={data.temperature} gpu={data.gpu}/>
     </Space>
   )
 }

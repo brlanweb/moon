@@ -60,12 +60,12 @@ function Trace(props) {
   return (
     <div className={styles.msgRow}>
       <div className={styles.trace}>
-        <div className={styles.traceHeader} onClick={() => setOpen(!open)}>
+        <button type="button" className={styles.traceHeader} aria-expanded={open} onClick={() => setOpen(!open)}>
           {open ? <DownOutlined/> : <RightOutlined/>}
           <span style={{marginLeft: 6}}>
             {t('执行过程')}（{t('{} 条命令', cmdCount)}）
           </span>
-        </div>
+        </button>
         {open && (
           <div className={styles.traceBody}>
             {items.map(item => (

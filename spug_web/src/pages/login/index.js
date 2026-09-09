@@ -3,103 +3,113 @@
  * Copyright (c) <spug.dev@gmail.com>
  * Released under the AGPL-3.0 License.
  */
-import React, { useState, useEffect } from 'react';
-import { Form, Input, Button, Tabs, Modal, Dropdown, message } from 'antd';
-import {
-  UserOutlined,
-  LockOutlined,
-  CopyrightOutlined,
-  GithubOutlined,
-  MailOutlined,
-  GlobalOutlined
-} from '@ant-design/icons';
+import React, {useState, useEffect, useRef} from 'react';
+import {Form, Input, Button, Tabs, notification, Dropdown} from 'antd';
+import {UserOutlined, LockOutlined, MailOutlined, GlobalOutlined, ArrowRightOutlined, GithubOutlined} from '@ant-design/icons';
 import styles from './login.module.css';
+import MoonBrand from 'components/MoonBrand';
 import history from 'libs/history';
-import { http, updatePermissions, t, langMode, setLanguage } from 'libs';
-import logo from 'layout/logo-spug-txt.png';
+import {http, updatePermissions, t, langMode, setLanguage} from 'libs';
 import envStore from 'pages/config/environment/store';
 import appStore from 'pages/config/app/store';
 import requestStore from 'pages/deploy/request/store';
 import execStore from 'pages/exec/task/store';
 import hostStore from 'pages/host/store';
-import { getDefaultPath } from '../../routes';
+import {getDefaultPath} from '../../routes';
 
-export default function () {
+export default function Login() {
   const [form] = Form.useForm();
   const [counter, setCounter] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [loginType, setLoginType] = useState(localStorage.getItem('login_type') || 'default');
+  const [loginType, setLoginType] = useState(() => localStorage.getItem('login_type') === 'ldap' ? 'ldap' : 'default');
   const [codeVisible, setCodeVisible] = useState(false);
   const [codeLoading, setCodeLoading] = useState(false);
+  const busy = useRef(false);
+  const mounted = useRef(true);
 
   useEffect(() => {
+    document.title = `${t('登录')} | Moon`;
     envStore.records = [];
     appStore.records = [];
     requestStore.records = [];
     requestStore.deploys = [];
     hostStore.rawRecords = [];
     execStore.hosts = [];
-  }, [])
+    return () => { mounted.current = false; };
+  }, []);
 
   useEffect(() => {
-    setTimeout(() => {
-      if (counter > 0) {
-        setCounter(counter - 1)
-      }
-    }, 1000)
-  }, [counter])
-
-  function handleSubmit() {
-    const formData = form.getFieldsValue();
-    if (codeVisible && !formData.captcha) return message.error(t('请输入验证码'));
-    setLoading(true);
-    formData['type'] = loginType;
-    http.post('/api/account/login/', formData)
-      .then(data => {
-        if (data['required_mfa']) {
-          setCodeVisible(true);
-          setCounter(30);
-          setLoading(false)
-        } else if (!data['has_real_ip']) {
-          Modal.warning({
-            title: t('安全警告'),
-            className: styles.tips,
-            content: <div>
-              {t('未能获取到访问者的真实IP，无法提供基于请求来源IP的合法性验证，详细信息请参考')}
-              <a target="_blank"
-                 href="https://spug.cc/docs/practice/"
-                 rel="noopener noreferrer">{t('官方文档')}</a>。
-            </div>,
-            onOk: () => doLogin(data)
-          })
-        } else {
-          doLogin(data)
-        }
-      }, () => setLoading(false))
-  }
+    if (!counter) return;
+    const timer = setTimeout(() => setCounter(value => value - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [counter]);
 
   function doLogin(data) {
-    localStorage.setItem('id', data['id']);
-    localStorage.setItem('token', data['access_token']);
-    localStorage.setItem('nickname', data['nickname']);
-    localStorage.setItem('is_supper', data['is_supper']);
-    localStorage.setItem('permissions', JSON.stringify(data['permissions']));
+    localStorage.setItem('id', data.id);
+    localStorage.setItem('token', data.access_token);
+    localStorage.setItem('nickname', data.nickname);
+    localStorage.setItem('is_supper', data.is_supper);
+    localStorage.setItem('permissions', JSON.stringify(data.permissions));
     localStorage.setItem('login_type', loginType);
     updatePermissions();
-    if (history.location.state && history.location.state['from']) {
-      history.push(history.location.state['from'])
-    } else {
-      history.push(getDefaultPath())
+    history.push(history.location.state && history.location.state.from ? history.location.state.from : getDefaultPath());
+  }
+
+  async function handleSubmit(values) {
+    if (busy.current) return;
+    busy.current = true;
+    setLoading(true);
+    try {
+      const payload = {username: values.username, password: values.password, type: loginType};
+      if (codeVisible) payload.captcha = values.captcha;
+      const data = await http.post('/api/account/login/', payload);
+      if (!mounted.current) return;
+      if (data.required_mfa) {
+        setCodeVisible(true);
+        setCounter(30);
+      } else {
+        if (!data.has_real_ip) {
+          notification.warning({
+            key: 'login-real-ip-warning',
+            message: t('安全警告'),
+            description: <div>
+              {t('未能获取到访问者的真实IP，无法提供基于请求来源IP的合法性验证，详细信息请参考')}
+              <a target="_blank" href="https://spug.cc/docs/practice/" rel="noopener noreferrer">{t('上游文档')}</a>。
+            </div>,
+            duration: 6
+          });
+        }
+        doLogin(data);
+      }
+    } catch (_) {
+      // The shared HTTP client displays server and network errors.
+    } finally {
+      busy.current = false;
+      if (mounted.current) setLoading(false);
     }
   }
 
-  function handleCaptcha() {
-    setCodeLoading(true);
-    const formData = form.getFieldsValue(['username', 'password']);
-    formData['type'] = loginType;
-    http.post('/api/account/login/', formData)
-      .then(() => setCounter(30))
-      .finally(() => setCodeLoading(false))
+  async function handleCaptcha() {
+    if (busy.current || counter > 0) return;
+    try {
+      const values = await form.validateFields(['username', 'password']);
+      if (busy.current) return;
+      busy.current = true;
+      setCodeLoading(true);
+      await http.post('/api/account/login/', {...values, type: loginType});
+      if (mounted.current) setCounter(30);
+    } catch (_) {
+      // Validation is inline; network errors are handled by the HTTP client.
+    } finally {
+      busy.current = false;
+      if (mounted.current) setCodeLoading(false);
+    }
+  }
+
+  function resetChallenge() {
+    setCodeVisible(false);
+    setCounter(0);
+    form.setFieldsValue({captcha: undefined});
   }
 
   const languageMenu = {
@@ -112,81 +122,80 @@ export default function () {
 
   return (
     <div className={styles.container}>
-      <div className={styles.language}>
-        <Dropdown menu={languageMenu} placement="bottomRight">
-          <div style={{cursor: 'pointer', fontSize: 16, padding: 8}}>
-            <GlobalOutlined style={{marginRight: 4}}/>{langMode === 'zh' ? '简体中文' : 'English'}
-          </div>
+      <header className={styles.header}>
+        <MoonBrand/>
+        <Dropdown menu={languageMenu} placement="bottomRight" trigger={['click']}>
+          <button className={styles.language} type="button" aria-label={t('切换语言')}>
+            <GlobalOutlined/><span>{langMode === 'zh' ? '简体中文' : 'English'}</span>
+          </button>
         </Dropdown>
-      </div>
-      <div className={styles.titleContainer}>
-        <div><img className={styles.logo} src={logo} alt="logo"/></div>
-        <div className={styles.desc}>{t('灵活、强大、易用的开源运维平台')}</div>
-      </div>
-      <div className={styles.formContainer}>
-        <Tabs
-          activeKey={loginType}
-          className={styles.tabs}
-          onTabClick={v => setLoginType(v)}
-          items={[
-            {key: 'default', label: t('普通登录')},
-            {key: 'ldap', label: t('LDAP登录')}
-          ]}/>
-        <Form form={form}>
-          <Form.Item name="username" className={styles.formItem}>
-            <Input
-              size="large"
-              autoComplete="off"
-              placeholder={t('请输入账户')}
-              prefix={<UserOutlined className={styles.icon}/>}/>
-          </Form.Item>
-          <Form.Item name="password" className={styles.formItem}>
-            <Input.Password
-              size="large"
-              autoComplete="off"
-              placeholder={t('请输入密码')}
-              onPressEnter={handleSubmit}
-              prefix={<LockOutlined className={styles.icon}/>}/>
-          </Form.Item>
-          <Form.Item hidden={!codeVisible} name="captcha" className={styles.formItem}>
-            <div style={{display: 'flex'}}>
-              <Form.Item noStyle name="captcha">
-                <Input
-                  size="large"
-                  autoComplete="off"
-                  placeholder={t('请输入验证码')}
-                  prefix={<MailOutlined className={styles.icon}/>}/>
+      </header>
+      <main className={styles.main}>
+        <section className={styles.visual} aria-label="Moon">
+          <div className={styles.visualHeading}>
+            <div className={styles.kicker}>MOON / OPERATIONS</div>
+            <h2>Moon<span className={styles.titleDot}>.</span></h2>
+            <p>{t('运维控制台')}</p>
+          </div>
+          <img className={styles.moon} src={`${process.env.PUBLIC_URL || ''}/moon-surface.jpg`} alt=""/>
+          <div className={styles.visualFooter}><span>01 / MOON</span><span>{t('统一运维 · 有序掌控')}</span></div>
+        </section>
+        <section className={styles.formSection} aria-labelledby="login-heading">
+          <div className={styles.formContainer}>
+            <div className={styles.formEyebrow}><span/> MOON CONSOLE</div>
+            <h1 id="login-heading">{t('欢迎回来')}</h1>
+            <p className={styles.desc}>{t('登录 Moon 运维控制台')}</p>
+            <Tabs activeKey={loginType} className={styles.tabs}
+              onChange={value => {setLoginType(value); resetChallenge();}}
+              items={[
+                {key: 'default', label: t('普通登录'), disabled: loading || codeLoading},
+                {key: 'ldap', label: t('LDAP登录'), disabled: loading || codeLoading}
+              ]}/>
+            <Form form={form} layout="vertical" onFinish={handleSubmit} requiredMark={false}
+              onValuesChange={changed => {if (codeVisible && ('username' in changed || 'password' in changed)) resetChallenge();}}>
+              <Form.Item name="username" label={t('账户')} className={styles.formItem}
+                rules={[{required: true, whitespace: true, message: t('请输入账户')}] }>
+                <Input name="username" size="large" autoComplete="username" spellCheck={false}
+                  disabled={loading || codeLoading} placeholder={t('请输入账户')}
+                  prefix={<UserOutlined className={styles.icon}/>}/>
               </Form.Item>
-              {counter > 0 ? (
-                <Button disabled size="large" style={{marginLeft: 8}}>{t('{} 秒后重新获取', counter)}</Button>
-              ) : (
-                <Button size="large" loading={codeLoading} style={{marginLeft: 8}}
-                        onClick={handleCaptcha}>{t('获取验证码')}</Button>
-              )}
-            </div>
-          </Form.Item>
-        </Form>
-
-        <Button
-          block
-          size="large"
-          type="primary"
-          className={styles.button}
-          loading={loading}
-          onClick={handleSubmit}>{t('登录')}</Button>
-      </div>
-
-      <div className={styles.footerZone}>
-        <div className={styles.linksZone}>
-          <a className={styles.links} title={t('官网')} href="https://spug.cc" target="_blank"
-             rel="noopener noreferrer">{t('官网')}</a>
-          <a className={styles.links} title="Github" href="https://github.com/openspug/spug" target="_blank"
-             rel="noopener noreferrer"><GithubOutlined/></a>
-          <a title={t('文档')} href="https://spug.cc/docs/about-spug/" target="_blank"
-             rel="noopener noreferrer">{t('文档')}</a>
+              <Form.Item name="password" label={t('密码')} className={styles.formItem}
+                rules={[{required: true, message: t('请输入密码')}] }>
+                <Input.Password name="password" size="large" autoComplete="current-password"
+                  disabled={loading || codeLoading} placeholder={t('请输入密码')}
+                  prefix={<LockOutlined className={styles.icon}/>}/>
+              </Form.Item>
+              {codeVisible && <div className={styles.challenge} aria-live="polite">
+                <div className={styles.challengeTitle}>{t('身份验证')}</div>
+                <div className={styles.codeRow}>
+                  <Form.Item name="captcha" label={t('验证码')} className={styles.codeField} preserve={false}
+                    rules={[{required: true, whitespace: true, message: t('请输入验证码')}] }>
+                    <Input name="captcha" size="large" autoComplete="one-time-code" inputMode="numeric"
+                      disabled={loading || codeLoading} placeholder={t('请输入验证码')}
+                      prefix={<MailOutlined className={styles.icon}/>}/>
+                  </Form.Item>
+                  <Button className={styles.codeButton} htmlType="button" disabled={counter > 0 || loading}
+                    loading={codeLoading} onClick={handleCaptcha}>
+                    {counter > 0 ? t('{} 秒后重新获取', counter) : t('获取验证码')}
+                  </Button>
+                </div>
+              </div>}
+              <Button block size="large" type="primary" htmlType="submit" className={styles.button}
+                loading={loading} disabled={codeLoading}>
+                {t('登录控制台')}<ArrowRightOutlined/>
+              </Button>
+            </Form>
+            <div className={styles.formFoot}><LockOutlined/>{t('账户身份验证')}</div>
+          </div>
+        </section>
+      </main>
+      <footer className={styles.footer}>
+        <span>Moon <span className={styles.footerYear}>/ {new Date().getFullYear()}</span><span className={styles.attribution}>Copyright &copy; {new Date().getFullYear()} OpenSpug</span></span>
+        <div className={styles.links}>
+          <a href="https://github.com/openspug/spug" target="_blank" rel="noopener noreferrer"><GithubOutlined/>{t('上游源码')}</a>
+          <a href="https://spug.cc/docs/about-spug/" target="_blank" rel="noopener noreferrer">{t('上游文档')}<ArrowRightOutlined/></a>
         </div>
-        <div style={{color: 'rgba(0, 0, 0, .45)'}}>Copyright <CopyrightOutlined/> {new Date().getFullYear()} By OpenSpug</div>
-      </div>
+      </footer>
     </div>
-  )
+  );
 }

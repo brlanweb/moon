@@ -7,6 +7,7 @@ from apps.monitor.utils import handle_notify, handle_trigger_event, handle_ai_po
 from apps.monitor.docker import (
     DetectionResult, check_target as check_docker_target, may_start_repair,
     parse_scope, repair_target_key, verify_recovery)
+from apps.monitor.resource import check_target as check_resource_target
 from socket import socket
 import subprocess
 import ipaddress
@@ -107,7 +108,7 @@ def monitor_worker_handler(job):
     is_ok, message = result
     target = addr
     host = None
-    if tp in ('3', '4', '6'):
+    if tp in ('3', '4', '6', '7'):
         host = Host.objects.filter(pk=addr).first()
         if host:
             target = f'{host.name}({host.hostname})'
@@ -141,7 +142,7 @@ def monitor_worker_handler(job):
     if v_count >= threshold:
         if not v_time or int(time.time()) - int(v_time) >= quiet * 60:
             rds.hset(key, f_time, int(time.time()))
-            handle_trigger_event(task_id, addr if tp in ('3', '4', '6') else None)
+            handle_trigger_event(task_id, addr if tp in ('3', '4', '6', '7') else None)
             # 第一条通知：先把故障本身发出去。AI 处理可能耗时数分钟，
             # 若等它结束再通知，这段时间内没有任何人知道服务已经挂了。
             logging.warning('send fault alarm notification')
@@ -176,6 +177,9 @@ def dispatch(tp, addr, extra):
         if not host:
             return DetectionResult(False, f'unknown host id for {addr!r}', 'infrastructure')
         return check_docker_target(host, extra)
+    elif tp == '7':
+        host = Host.objects.filter(pk=addr).first()
+        return check_resource_target(host, extra)
     elif tp == '3':
         command = f'ps -ef|grep -v grep|grep {extra!r}'
         host = Host.objects.filter(pk=addr).first()

@@ -19,13 +19,14 @@ export default function Resources({kind, hostId}) {
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState('');
   const seq = useRef(0);
+  const mountedRef = useRef(false);
   const canWrite = hasPermission('docker.project.do');
 
   const load = useCallback(() => {
-    if (!hostId) return;
+    if (hostId === undefined || !mountedRef.current) return Promise.resolve();
     const current = ++seq.current;
     setLoading(true);
-    http.post('/api/docker/resource/', {host_id: hostId, kind, action: 'list'}, {timeout: 70000})
+    return http.post('/api/docker/resource/', {host_id: hostId, kind, action: 'list'}, {timeout: 70000})
       .then(data => {
         if (current !== seq.current) return;
         setItems(data.items || []);
@@ -36,8 +37,13 @@ export default function Resources({kind, hostId}) {
   }, [hostId, kind]);
 
   useEffect(() => {
+    mountedRef.current = true;
     setItems([]);
     load();
+    return () => {
+      mountedRef.current = false;
+      seq.current += 1;
+    };
   }, [load]);
 
   function remove(item) {
@@ -46,6 +52,7 @@ export default function Resources({kind, hostId}) {
       content: t('确定要删除【{}】？此操作不可恢复。', item.name),
       okButtonProps: {danger: true},
       onOk: () => {
+        if (!mountedRef.current) return;
         setBusy(item.id);
         return http.post('/api/docker/resource/', {
           host_id: hostId, kind, action: 'remove',
@@ -54,9 +61,9 @@ export default function Resources({kind, hostId}) {
         }, {timeout: 320000})
           .then(() => {
             message.success(t('删除成功'));
-            load();
+            return load();
           })
-          .finally(() => setBusy(''));
+          .finally(() => { if (mountedRef.current) setBusy(''); });
       },
     });
   }
@@ -72,14 +79,15 @@ export default function Resources({kind, hostId}) {
       content: tips[kind],
       okButtonProps: {danger: true},
       onOk: () => {
+        if (!mountedRef.current) return;
         setBusy('prune');
         return http.post('/api/docker/resource/', {host_id: hostId, kind, action: 'prune'},
           {timeout: 320000})
           .then(data => {
             message.success(data.output ? data.output.split('\n').slice(-2).join(' ') : t('清理完成'));
-            load();
+            return load();
           })
-          .finally(() => setBusy(''));
+          .finally(() => { if (mountedRef.current) setBusy(''); });
       },
     });
   }
@@ -89,7 +97,7 @@ export default function Resources({kind, hostId}) {
     return (
       <Tooltip title={isProtected ? t('Docker 内置网络不可删除') : t('删除')}>
         <Button type="text" danger icon={<DeleteOutlined/>}
-                loading={busy === item.id} disabled={!canWrite || isProtected}
+                loading={busy === item.id} disabled={!canWrite || isProtected || loading || Boolean(busy)}
                 onClick={() => remove(item)}/>
       </Tooltip>
     );
@@ -130,13 +138,14 @@ export default function Resources({kind, hostId}) {
       <div className={styles.configBar}>
         <span className={styles.resourceCount}>{t('共 {} 项', items.length)}</span>
         <Space>
-          <Button icon={<ReloadOutlined/>} loading={loading} onClick={load}>{t('刷新')}</Button>
-          <Button danger icon={<ClearOutlined/>} loading={busy === 'prune'} disabled={!canWrite}
+          <Button icon={<ReloadOutlined/>} loading={loading} disabled={hostId === undefined || Boolean(busy)} onClick={load}>{t('刷新')}</Button>
+          <Button danger icon={<ClearOutlined/>} loading={busy === 'prune'}
+                  disabled={!canWrite || hostId === undefined || loading || Boolean(busy)}
                   onClick={prune}>{t('清理未使用')}</Button>
         </Space>
       </div>
       <Table size="small" rowKey="id" loading={loading} columns={columns} dataSource={items}
-             scroll={{x: 720, y: 320}}
+             scroll={{x: 720}}
              pagination={{size: 'small', hideOnSinglePage: true, pageSize: 10}}/>
     </div>
   );

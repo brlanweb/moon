@@ -12,20 +12,17 @@ export default class extends React.Component {
   static Item = Breadcrumb.Item
 
   render() {
+    // 条件渲染会产生 false/null，不能直接读取最后一个原始子项的 props。
+    const children = React.Children.toArray(this.props.children).filter(React.isValidElement);
     let title = this.props.title;
-    if (!title) {
-      const rawChildren = this.props.children;
-      if (Array.isArray(rawChildren)) {
-        title = rawChildren[rawChildren.length - 1].props.children
-      } else {
-        title = rawChildren.props.children
-      }
+    if (!title && children.length) {
+      title = children[children.length - 1].props.children
     }
 
     return (
       <div className={styles.breadcrumb}>
         <Breadcrumb>
-          {this.props.children}
+          {children}
         </Breadcrumb>
         {this.props.extra ? (
           <div className={styles.title}>

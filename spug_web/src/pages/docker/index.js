@@ -9,17 +9,63 @@ import {
 } from '@ant-design/icons';
 import { ACEditor } from 'components';
 import { hasPermission, http, t, X_TOKEN } from 'libs';
+import { Prompt } from 'react-router-dom';
 import CreateProject from './CreateProject';
 import Resources from './Resources';
 import styles from './index.module.less';
 
 
-// 主机级资源，与 compose 项目并列展示，不依赖任何项目选中状态。
-const RESOURCE_TABS = [
-  {key: 'images', label: '镜像'},
-  {key: 'networks', label: '网络'},
-  {key: 'volumes', label: '存储卷'},
-];
+const SECTION_LABELS = {
+  projects: '项目管理',
+  images: '镜像管理',
+  networks: '网络管理',
+  volumes: '存储管理',
+};
+
+export function resolveSection(section, pathname = '') {
+  const value = section || pathname.replace(/\/+$/, '').split('/').pop();
+  const aliases = {project: 'projects', storage: 'volumes'};
+  const key = aliases[value] || value;
+  return Object.prototype.hasOwnProperty.call(SECTION_LABELS, key) ? key : 'projects';
+}
+
+export default function DockerConsole({section, location, path, match} = {}) {
+  const currentSection = resolveSection(section, location?.pathname || path || match?.path);
+  const [hosts, setHosts] = useState([]);
+  const [hostId, setHostId] = useState();
+
+  useEffect(() => {
+    let cancelled = false;
+    http.get('/api/host/').then(data => { if (!cancelled) setHosts(data); });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    document.title = `Moon Docker - ${t(SECTION_LABELS[currentSection])}`;
+  }, [currentSection]);
+
+  if (currentSection === 'projects') {
+    return <ProjectConsole key={hostId === undefined ? 'none' : hostId}
+                           hosts={hosts} hostId={hostId} onHostChange={setHostId}/>;
+  }
+
+  return (
+    <main className={`${styles.page} ${styles.resourcePage}`}>
+      <header className={styles.header}>
+        <h2><DockerOutlined/> {t(SECTION_LABELS[currentSection])}</h2>
+        <Select className={styles.resourceHostSelect} value={hostId}
+                aria-label={t('选择服务器')} placeholder={t('选择服务器')} onChange={setHostId}>
+          {hosts.map(host => <Select.Option key={host.id} value={host.id}>{host.name} ({host.hostname})</Select.Option>)}
+        </Select>
+      </header>
+      <section className={styles.resourcePanel}>
+        {hostId === undefined ? <Empty description={t('请先选择服务器')}/> : (
+          <Resources key={`${currentSection}:${hostId}`} kind={currentSection} hostId={hostId}/>
+        )}
+      </section>
+    </main>
+  );
+}
 
 // v2：缓存结构从「项目数组」改为「项目 + 独立容器」，换前缀避免读到旧数据
 const PROJECT_CACHE_PREFIX = 'spug:docker:inspect:v2:';
@@ -52,9 +98,7 @@ function writeProjectCache(hostId, data) {
   }
 }
 
-export default function DockerConsole() {
-  const [hosts, setHosts] = useState([]);
-  const [hostId, setHostId] = useState();
+function ProjectConsole({hosts, hostId, onHostChange}) {
   const [projects, setProjects] = useState([]);
   // 非 compose 管理的容器（docker run 起的，或 compose 标签残缺）
   const [standalone, setStandalone] = useState([]);
@@ -76,8 +120,9 @@ export default function DockerConsole() {
   // 列表来自缓存、后台正在拉取真实数据时为 true，仅用于提示，不阻塞交互。
   const [stale, setStale] = useState(false);
   const [stats, setStats] = useState({});
-  // 'project' 表示 compose 项目视图，其余为主机级资源视图（镜像/网络/存储卷）。
+  // 项目管理内仅切换 Compose 项目与独立容器。
   const [view, setView] = useState('project');
+  const mountedRef = useRef(false);
   const discoverSeq = useRef(0);
   const configSeq = useRef(0);
   const logsSeq = useRef(0);
@@ -96,9 +141,15 @@ export default function DockerConsole() {
   const writeBusy = Boolean(running && !running.startsWith('logs:'));
 
   useEffect(() => {
-    document.title = 'Spug Docker';
-    http.get('/api/host/').then(setHosts);
-    return () => { closeStats(); closeLogStream(); };
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      discoverSeq.current += 1;
+      configSeq.current += 1;
+      logsSeq.current += 1;
+      closeStats();
+      closeLogStream();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -133,6 +184,7 @@ export default function DockerConsole() {
   }
 
   function discover(targetHostId = hostId, preferredKey, silent = false, useCache = false) {
+    if (!mountedRef.current || targetHostId === undefined) return Promise.resolve(null);
     const seq = ++discoverSeq.current;
     setFetching(true);
     if (!silent) {
@@ -170,12 +222,14 @@ export default function DockerConsole() {
       setStandalone(cached.standalone || []);
       applyProjects(cached.projects || [], undefined, false);
       setStale(true);
-      return discover(targetHostId, undefined, true).finally(() => setStale(false));
+      return discover(targetHostId, undefined, true).finally(() => {
+        if (mountedRef.current) setStale(false);
+      });
     }
     setStale(true);
     return discover(targetHostId, undefined, false, true)
       .then(data => (data && data.cached ? discover(targetHostId, undefined, true) : null))
-      .finally(() => setStale(false));
+      .finally(() => { if (mountedRef.current) setStale(false); });
   }
 
   function closeStats() {
@@ -263,7 +317,7 @@ export default function DockerConsole() {
       logStreamRef.current.close();
       logStreamRef.current = null;
     }
-    setFollowing(false);
+    if (mountedRef.current) setFollowing(false);
   }
 
   // 跟随日志的目标：项目视图按服务（可为空表示全部），独立容器视图按容器名
@@ -317,7 +371,7 @@ export default function DockerConsole() {
     return () => {
       es.close();
       if (logStreamRef.current === es) logStreamRef.current = null;
-      setFollowing(false);
+      if (mountedRef.current) setFollowing(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [logStreamUrl]);
@@ -375,11 +429,12 @@ export default function DockerConsole() {
     setRunning('save');
     http.post('/api/docker/config/', {...target(), content: configContent})
       .then(() => {
+        if (!mountedRef.current) return;
         configCache.current[selectedFile] = configContent;
         setSavedContent(configContent);
         message.success(t('Compose 配置已校验并保存'));
       })
-      .finally(() => setRunning(''));
+      .finally(() => { if (mountedRef.current) setRunning(''); });
   }
 
   function removeProject() {
@@ -403,11 +458,12 @@ export default function DockerConsole() {
         }, {timeout: 620000})
           .then(() => {
             message.success(t('项目已删除'));
+            if (!mountedRef.current) return;
             setActiveKey(undefined);
             setLogLines([]);
             return discover(hostId);
           })
-          .finally(() => setRunning(''));
+          .finally(() => { if (mountedRef.current) setRunning(''); });
       },
     });
   }
@@ -430,7 +486,7 @@ export default function DockerConsole() {
             return discover(hostId, activeKey, true);
           }
         })
-        .finally(() => setRunning(''));
+        .finally(() => { if (mountedRef.current) setRunning(''); });
     };
     if (actionName === 'down') {
       Modal.confirm({
@@ -461,7 +517,7 @@ export default function DockerConsole() {
           message.success(t('操作成功'));
           return discover(hostId, activeKey, true);
         })
-        .finally(() => setRunning(''));
+        .finally(() => { if (mountedRef.current) setRunning(''); });
     };
     if (actionName === 'stop') {
       Modal.confirm({
@@ -481,9 +537,9 @@ export default function DockerConsole() {
         content: (
           <div>
             <p>{t('将执行 docker rm -f，{}容器会被直接移除。', item.state === 'running' ? t('运行中的') : '')}</p>
-            <p>{t('该容器不由 Compose 管理，spug 没有它的启动参数，删除后无法在此页面重建。')}</p>
+            <p>{t('该容器不由 Compose 管理，Moon 没有它的启动参数，删除后无法在此页面重建。')}</p>
             <p className={styles.hintMuted}>
-              {t('镜像和具名数据卷会保留，如需清理请到「主机资源」中操作。')}
+              {t('镜像和具名数据卷会保留，如需清理请到「镜像管理」或「存储管理」中操作。')}
             </p>
           </div>
         ),
@@ -511,7 +567,7 @@ export default function DockerConsole() {
     const apply = () => {
       configCache.current = {};
       setView('project');
-      setHostId(value);
+      onHostChange(value);
     };
     if (configContent !== savedContent) {
       Modal.confirm({
@@ -757,10 +813,12 @@ export default function DockerConsole() {
 
   return (
     <div className={styles.page}>
+      <Prompt when={configContent !== savedContent}
+              message={t('离开项目管理会丢弃未保存的配置修改，确认继续？')}/>
       <aside className={styles.sidebar}>
-        <div className={styles.sidebarHeader}><div><DockerOutlined/> Docker</div></div>
+        <div className={styles.sidebarHeader}><div><DockerOutlined/> {t('项目管理')}</div></div>
         <Select className={styles.hostSelect} value={hostId} placeholder={t('选择服务器')}
-                onChange={changeHost}>
+                aria-label={t('选择服务器')} onChange={changeHost}>
           {hosts.map(host => <Select.Option key={host.id} value={host.id}>{host.name} ({host.hostname})</Select.Option>)}
         </Select>
         <div className={styles.listHeader}>
@@ -770,35 +828,28 @@ export default function DockerConsole() {
               <Button type="text" size="small" icon={<PlusOutlined/>} disabled={!hostId}
                       title={t('新建项目')} onClick={() => setCreateOpen(true)}/>
             )}
-            <Button type="text" size="small" icon={<ReloadOutlined/>} loading={fetching} onClick={refreshProjects}/>
+            <Button type="text" size="small" icon={<ReloadOutlined/>} loading={fetching}
+                    disabled={hostId === undefined} title={t('刷新')} onClick={refreshProjects}/>
           </Space>
         </div>
-        {/* 已有缓存数据时不再遮罩，后台刷新对用户无感 */}
-        <Spin spinning={fetching && !projects.length}>
+        <Spin spinning={fetching && !projects.length} wrapperClassName={styles.projectSpin}>
           <div className={styles.projectList}>
             {projects.map(item => (
-              <button key={projectKey(item)} className={projectKey(item) === activeKey ? styles.activeProject : styles.project}
+              <button key={projectKey(item)} className={view === 'project' && projectKey(item) === activeKey ? styles.activeProject : styles.project}
                       onClick={() => selectProject(item)}>
                 <span>{item.name}</span><small>{item.containers.length} containers · {item.workdir}</small>
               </button>
             ))}
-            {!fetching && !projects.length && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('该服务器暂无项目')}/>} 
+            {!fetching && !projects.length && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE}
+              description={hostId === undefined ? t('请先选择服务器') : t('该服务器暂无项目')}/>}
           </div>
         </Spin>
-        <div className={styles.listHeader}><span>{t('主机资源')}</span></div>
         <div className={styles.resourceNav}>
           <button disabled={!hostId}
                   className={view === 'standalone' ? styles.activeProject : styles.project}
                   onClick={() => setView('standalone')}>
             <span>{t('独立容器')} ({standalone.length})</span>
           </button>
-          {RESOURCE_TABS.map(item => (
-            <button key={item.key} disabled={!hostId}
-                    className={view === item.key ? styles.activeProject : styles.project}
-                    onClick={() => setView(item.key)}>
-              <span>{t(item.label)}</span>
-            </button>
-          ))}
         </div>
       </aside>
       <main className={styles.content}>
@@ -822,7 +873,7 @@ export default function DockerConsole() {
             </header>
             <section className={styles.toolbar}>
               <Alert type="info" showIcon
-                     message={t('这些容器不由 Docker Compose 管理（docker run 启动，或 Compose 标签残缺）。spug 没有它们的启动参数，删除后无法在此页面重建。')}/>
+                     message={t('这些容器不由 Docker Compose 管理（docker run 启动，或 Compose 标签残缺）。Moon 没有它们的启动参数，删除后无法在此页面重建。')}/>
             </section>
             <section className={styles.containers}>
               <Table size="small" rowKey="name" pagination={false} columns={standaloneColumns}
@@ -833,21 +884,6 @@ export default function DockerConsole() {
             <section className={styles.editorArea}>
               <Tabs activeKey="logs" items={[{key: 'logs', label: t('日志'), children: logPane}]}
                     className={styles.fullTabs}/>
-            </section>
-          </>
-        ) : view !== 'project' ? (
-          <>
-            <header className={styles.header}>
-              <div>
-                <h2>{t(RESOURCE_TABS.find(item => item.key === view).label)}</h2>
-                <span>{hosts.find(item => item.id === hostId)?.name}</span>
-              </div>
-              <Space>
-                <Button onClick={() => setView('project')}>{t('返回项目')}</Button>
-              </Space>
-            </header>
-            <section className={styles.resourcePanel}>
-              <Resources kind={view} hostId={hostId}/>
             </section>
           </>
         ) : !active ? (

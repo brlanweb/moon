@@ -11,9 +11,7 @@ module.exports = function (app) {
     changeOrigin: true,
     ws: true,
     headers: {'X-Real-IP': '1.1.1.1'},
-    pathRewrite: {
-      '^/api': ''
-    },
+    // Port 8000 is the container's Nginx gateway; it strips /api itself.
     // 添加错误处理
     onError: (err, req, res) => {
       console.log('Proxy error:', err.message);

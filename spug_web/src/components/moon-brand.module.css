@@ -1,0 +1,13 @@
+.brand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 11px;
+  color: #edf7f4;
+  font-size: 25px;
+  font-weight: 650;
+  line-height: 1;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+.brand img { display: block; width: 36px; height: 36px; object-fit: contain; flex-shrink: 0; }

@@ -32,7 +32,7 @@ class NotifyMixin:
             texts.extend([
                 f'**申请人员：** {req.created_by.nickname}',
                 f'**申请时间：** {human_datetime()}',
-                '> 来自 Spug运维平台'
+                '> 来自 Moon运维平台'
             ])
         elif action == 'approve_rst':
             color, text = ('#008000', '通过') if req.status == '1' else ('#f90202', '驳回')
@@ -42,7 +42,7 @@ class NotifyMixin:
                 f'**审核结果：** <font color="{color}">{text}</font>',
                 f'**审核意见：** {req.reason or ""}',
                 f'**审核时间：** {human_datetime()}',
-                '> 来自 Spug运维平台'
+                '> 来自 Moon运维平台'
             ])
         else:
             if req.status == '3':
@@ -59,12 +59,12 @@ class NotifyMixin:
                 f'**执行人员：** {do_user}',
                 f'**发布结果：** <font color="{color}">{text}</font>',
                 f'**发布时间：** {human_datetime()}',
-                '> 来自 Spug运维平台'
+                '> 来自 Moon运维平台'
             ])
         data = {
             'msgtype': 'markdown',
             'markdown': {
-                'title': 'Spug 发布消息通知',
+                'title': 'Moon 发布消息通知',
                 'text': '\n\n'.join(texts)
             },
             'at': {
@@ -88,7 +88,7 @@ class NotifyMixin:
             texts.extend([
                 f'申请人员： {req.created_by.nickname}',
                 f'申请时间： {human_datetime()}',
-                '> 来自 Spug运维平台'
+                '> 来自 Moon运维平台'
             ])
         elif action == 'approve_rst':
             color, text = ('info', '通过') if req.status == '1' else ('warning', '驳回')
@@ -98,7 +98,7 @@ class NotifyMixin:
                 f'审核结果： <font color="{color}">{text}</font>',
                 f'审核意见： {req.reason or ""}',
                 f'审核时间： {human_datetime()}',
-                '> 来自 Spug运维平台'
+                '> 来自 Moon运维平台'
             ])
         else:
             if req.status == '3':
@@ -115,7 +115,7 @@ class NotifyMixin:
                 f'执行人员： {do_user}',
                 f'发布结果： <font color="{color}">{text}</font>',
                 f'发布时间： {human_datetime()}',
-                '> 来自 Spug运维平台'
+                '> 来自 Moon运维平台'
             ])
         data = {
             'msgtype': 'markdown',

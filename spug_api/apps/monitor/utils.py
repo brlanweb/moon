@@ -93,6 +93,18 @@ def _build_trigger_message(det, target, message):
         label = scope.get('service') or scope.get('container') or '未知目标'
         lines.append(f'Docker目标：{scope.get("kind") or "unknown"} / {label}')
         lines.append('排查重点：只检查该目标的状态、退出信息、健康检查和最近日志。')
+    elif det.type == '7':
+        from apps.monitor.resource import parse_config
+        try:
+            config = parse_config(det.extra)
+            unit = 'C' if config['metric'] == 'temperature' else '%'
+            lines.append(f'资源目标：{target} / {config["metric"]}')
+            lines.append(f'预警条件：>= {config["value"]}{unit}')
+            if config['metric'] == 'disk':
+                lines.append(f'挂载点：{config["mount"] or "使用率最高的挂载点"}')
+            lines.append('排查重点：该资源指标为何超出预警值；不得将缺失或采集失败视为恢复。')
+        except ValueError:
+            lines.append('资源监控配置无效，请人工检查。')
     return '\n'.join(lines)
 
 
@@ -122,8 +134,8 @@ def handle_ai_post_task(task_id, target, message, fault_times, verifier=None, re
     det = Detection.objects.filter(pk=task_id).first()
     if not det or det.ai_mode not in ('diagnose', 'repair') or not det.ai_host_id:
         return None
-    if det.type == '6' and getattr(result, 'failure_kind', '') == 'infrastructure':
-        logging.warning('skip docker ai task for infrastructure failure')
+    if getattr(result, 'failure_kind', '') == 'infrastructure':
+        logging.warning('skip monitor ai task for infrastructure failure')
         return None
 
     # 延迟导入避免 monitor 模块加载期与 ai 模块产生循环依赖

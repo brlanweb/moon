@@ -18,6 +18,8 @@ const dict = {
   '配置信息': 'Specs',
   'CPU使用率': 'CPU usage',
   '显存': 'VRAM',
+  '温度': 'Temp',
+  '该主机未暴露温度传感器': 'No temperature sensor is exposed by this host',
   '该主机未启用Swap': 'Swap is not enabled on this host',
   '未启用': 'Disabled',
   '网络': 'Net',
@@ -116,7 +118,7 @@ const dict = {
   '请下载使用该模板填充数据后导入': 'Download the template, fill in your data, then import it.',
   '主机导入模板.xlsx': 'host-import-template.xlsx',
   '导入数据': 'Data file',
-  'Spug使用密钥认证连接服务器，导入或输入的密码仅作首次验证使用，不会存储。': 'Spug connects to servers with SSH key authentication. Imported or entered passwords are only used for first-time verification and are never stored.',
+  'Moon使用密钥认证连接服务器，导入或输入的密码仅作首次验证使用，不会存储。': 'Moon connects to servers with SSH key authentication. Imported or entered passwords are only used for first-time verification and are never stored.',
   '导入主机': 'Import Hosts',
   '导入结果': 'Import Results',
   '成功：': 'Succeeded: ',
@@ -149,6 +151,10 @@ const dict = {
   '已选择 {} 台': '{} selected',
   '已选择 {} 台主机': '{} hosts selected',
   '取消选择': 'Clear Selection',
+
+  // Docker console
+  '该容器不由 Compose 管理，Moon 没有它的启动参数，删除后无法在此页面重建。': 'This container is not managed by Compose. Moon does not have its startup parameters and cannot recreate it here after deletion.',
+  '这些容器不由 Docker Compose 管理（docker run 启动，或 Compose 标签残缺）。Moon 没有它们的启动参数，删除后无法在此页面重建。': 'These containers are not managed by Docker Compose (started with docker run or missing Compose labels). Moon does not have their startup parameters and cannot recreate them here after deletion.',
 
   // IPAddress.js
   '公': 'Pub',

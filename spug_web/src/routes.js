@@ -4,6 +4,7 @@
  * Released under the AGPL-3.0 License.
  */
 import React from 'react';
+import { Redirect } from 'react-router-dom';
 import { t, hasPermission } from 'libs';
 import {
   DashboardOutlined,
@@ -37,6 +38,7 @@ import ConfigModel from './pages/config/model';
 import AgentIndex from './pages/ai/agent';
 import AISetting from './pages/ai/setting';
 import MonitorIndex from './pages/monitor';
+import ResourceMonitorIndex from './pages/monitor/ResourceIndex';
 import AlarmIndex from './pages/alarm/alarm';
 import AlarmGroup from './pages/alarm/group';
 import AlarmContact from './pages/alarm/contact';
@@ -59,7 +61,15 @@ const routes = [
     component: DashboardIndex
   },
   {icon: <CloudServerOutlined/>, title: t('主机管理'), auth: 'host.host.view', path: '/host', component: HostIndex},
-  {icon: <DockerOutlined/>, title: t('Docker 管理'), auth: 'docker.project.view', path: '/docker', component: DockerIndex},
+  {
+    icon: <DockerOutlined/>, title: t('容器管理'), auth: 'docker.project.view', child: [
+      {title: t('项目管理'), auth: 'docker.project.view', path: '/docker/projects', component: DockerIndex},
+      {title: t('镜像管理'), auth: 'docker.project.view', path: '/docker/images', component: DockerIndex},
+      {title: t('网络管理'), auth: 'docker.project.view', path: '/docker/networks', component: DockerIndex},
+      {title: t('存储管理'), auth: 'docker.project.view', path: '/docker/volumes', component: DockerIndex},
+      {path: '/docker', auth: 'docker.project.view', component: () => <Redirect to="/docker/projects"/>},
+    ]
+  },
   {
     icon: <CodeOutlined/>, title: t('批量执行'), auth: 'exec.task.do|exec.template.view', child: [
       {title: t('执行任务'), auth: 'exec.task.do', path: '/exec/task', component: ExecTask},
@@ -98,7 +108,12 @@ const routes = [
       {title: t('扩展管理'), auth: 'ai.mcp.view|ai.skill.view', path: '/ai/setting', component: AISetting},
     ]
   },
-  {icon: <MonitorOutlined/>, title: t('监控中心'), auth: 'monitor.monitor.view', path: '/monitor', component: MonitorIndex},
+  {
+    icon: <MonitorOutlined/>, title: t('监控中心'), auth: 'monitor.monitor.view', child: [
+      {title: t('服务监控'), auth: 'monitor.monitor.view', path: '/monitor', component: MonitorIndex},
+      {title: t('资源监控'), auth: 'monitor.monitor.view', path: '/monitor/resource', component: ResourceMonitorIndex},
+    ]
+  },
   {
     icon: <AlertOutlined/>, title: t('报警中心'), auth: 'alarm.alarm.view|alarm.contact.view|alarm.group.view', child: [
       {title: t('报警历史'), auth: 'alarm.alarm.view', path: '/alarm/alarm', component: AlarmIndex},

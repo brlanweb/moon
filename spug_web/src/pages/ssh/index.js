@@ -28,7 +28,7 @@ import HostMetrics from 'pages/ai/agent/Metrics';
 import { http, hasPermission, includes, t } from 'libs';
 import gStore from 'gStore';
 import styles from './index.module.less';
-import LogoSpugText from 'layout/logo-spug-white.png';
+import MoonBrand from 'components/MoonBrand';
 import lds from 'lodash';
 
 let posX = 0
@@ -48,7 +48,7 @@ function WebSSH(props) {
   const [sshMode] = useState(hasPermission('host.console.view'))
 
   useEffect(() => {
-    window.document.title = 'Spug web terminal'
+    window.document.title = 'Moon web terminal'
     window.addEventListener('beforeunload', leaveTips)
     fetchNodes()
     gStore.fetchUserSettings()
@@ -218,19 +218,13 @@ function WebSSH(props) {
     )
   }
 
-  const spug_web_terminal =
-    '                                                 __       __                          _                __\n' +
-    '   _____ ____   __  __ ____ _   _      __ ___   / /_     / /_ ___   _____ ____ ___   (_)____   ____ _ / /\n' +
-    '  / ___// __ \\ / / / // __ `/  | | /| / // _ \\ / __ \\   / __// _ \\ / ___// __ `__ \\ / // __ \\ / __ `// / \n' +
-    ' (__  )/ /_/ // /_/ // /_/ /   | |/ |/ //  __// /_/ /  / /_ /  __// /   / / / / / // // / / // /_/ // /  \n' +
-    '/____// .___/ \\__,_/ \\__, /    |__/|__/ \\___//_.___/   \\__/ \\___//_/   /_/ /_/ /_//_//_/ /_/ \\__,_//_/   \n' +
-    '     /_/            /____/                                                                               \n'
+  const spug_web_terminal = 'Moon web terminal\n';
 
   return hasPermission('host.console.view|host.console.list') ? (
     <div className={styles.container} onMouseUp={() => posX = 0} onMouseMove={handleMouseMove}>
       <div className={styles.sider} style={{width}}>
         <a className={styles.logo} href="/host" target="_blank">
-          <img src={LogoSpugText} alt="logo"/>
+          <MoonBrand/>
         </a>
         <div className={styles.hosts}>
           <Spin spinning={fetching}>

@@ -86,7 +86,7 @@ class Notification:
             'msgtype': 'markdown',
             'markdown': {
                 'title': '监控告警通知',
-                'text': '\n\n'.join(texts) + '\n\n> ###### 来自 Spug运维平台'
+                'text': '\n\n'.join(texts) + '\n\n> ###### 来自 Moon运维平台'
             },
             'at': {
                 'isAtAll': True
@@ -109,7 +109,7 @@ class Notification:
         ]
         if self.event == '2':
             content.append([{'tag': 'text', 'text': f'持续时间：{self.duration}'}])
-        content.append([{'tag': 'text', 'text': '来自 Spug运维平台'}])
+        content.append([{'tag': 'text', 'text': '来自 Moon运维平台'}])
         for url, secret in users:
             data = {
                 'msg_type': 'post',
@@ -136,7 +136,7 @@ class Notification:
         data = {
             'msgtype': 'markdown',
             'markdown': {
-                'content': '\n'.join(texts) + '\n> 来自 Spug运维平台'
+                'content': '\n'.join(texts) + '\n> 来自 Moon运维平台'
             }
         }
         for url in users:

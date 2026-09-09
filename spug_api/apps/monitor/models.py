@@ -23,6 +23,7 @@ class Detection(models.Model, ModelMixin):
         ('4', '自定义脚本'),
         ('5', 'Ping检测'),
         ('6', 'Docker服务检测'),
+        ('7', '资源监控'),
     )
     STATUS = (
         (0, '正常'),
@@ -64,7 +65,7 @@ class Detection(models.Model, ModelMixin):
         tmp['notify_mode'] = json.loads(self.notify_mode)
         tmp['notify_grp'] = json.loads(self.notify_grp)
         tmp['targets'] = json.loads(self.targets)
-        if self.type == '6' and isinstance(self.extra, str):
+        if self.type in ('6', '7') and isinstance(self.extra, str):
             try:
                 tmp['extra'] = json.loads(self.extra)
             except (TypeError, ValueError):

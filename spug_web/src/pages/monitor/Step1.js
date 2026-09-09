@@ -10,6 +10,8 @@ import { Modal, Form, Input, Select, Button, message } from 'antd';
 import TemplateSelector from '../exec/task/TemplateSelector';
 import HostSelector from 'pages/host/Selector';
 import DockerTarget from './DockerTarget';
+import ResourceFields from './ResourceFields';
+import {resourceDefaults, validResource} from './resource';
 import { LinkButton, ACEditor } from 'components';
 import { http, cleanCommand, t } from 'libs';
 import store from './store';
@@ -41,7 +43,8 @@ export default observer(function () {
   function handleChangeType(v) {
     store.record.type = v;
     store.record.targets = [];
-    store.record.extra = undefined;
+    store.record.extra = v === '7' ? resourceDefaults() : undefined;
+    if (v === '7') store.record.ai_mode = '';
   }
 
   function handleAddGroup() {
@@ -67,6 +70,7 @@ export default observer(function () {
   function canNext() {
     const {type, targets, extra, group} = store.record;
     const is_verify = name && group && targets.length;
+    if (type === '7') return is_verify && validResource(targets, extra);
     if (type === '6') return is_verify && extra && extra.kind;
     if (['2', '3', '4'].includes(type)) {
       return is_verify && extra
@@ -111,12 +115,13 @@ export default observer(function () {
           <Select.Option value="3">{t('进程检测')}</Select.Option>
           <Select.Option value="4">{t('自定义脚本')}</Select.Option>
           <Select.Option value="6">{t('Docker服务检测')}</Select.Option>
+          <Select.Option value="7">{t('资源监控')}</Select.Option>
         </Select>
       </Form.Item>
       <Form.Item required label={t('监控名称')}>
         <Input value={name} onChange={e => store.record.name = e.target.value} placeholder={t('请输入监控名称')}/>
       </Form.Item>
-      <Form.Item required label={t('Docker目标')} style={getStyle(['6'])}
+      {type === '6' && <Form.Item required label={t('Docker目标')}
                  extra={t('Compose服务按项目选择；独立容器删除后只能告警，无法自动重建。')}>
         <DockerTarget
           hostId={targets[0]}
@@ -125,7 +130,7 @@ export default observer(function () {
             store.record.targets = hostId ? [hostId] : [];
             store.record.extra = scope;
           }}/>
-      </Form.Item>
+      </Form.Item>}
       <Form.Item required label={t('监控地址')} style={getStyle(['1'])}>
         <Select
           mode="tags"
@@ -144,9 +149,10 @@ export default observer(function () {
           placeholder={t('IP或域名，支持多个地址，每输入完成一个后按回车确认')}
           notFoundContent={null}/>
       </Form.Item>
-      <Form.Item required label={t('监控主机')} style={getStyle(['3', '4'])}>
+      <Form.Item required label={t('监控主机')} style={getStyle(['3', '4', '7'])}>
         <HostSelector value={targets} onChange={ids => store.record.targets = ids}/>
       </Form.Item>
+      {type === '7' && <ResourceFields value={extra} onChange={value => store.record.extra = value}/>}
       <Form.Item label={t('响应时间')} style={getStyle(['1'])}>
         <Input suffix="ms" value={extra} placeholder={t('最长响应时间（毫秒），不设置则默认10秒超时')}
                onChange={e => store.record.extra = e.target.value}/>
@@ -157,10 +163,9 @@ export default observer(function () {
       <Form.Item required label={t('进程名称')} extra={t('执行 ps -ef 看到的进程名称。')} style={getStyle(['3'])}>
         <Input value={extra} placeholder={t('请输入进程名称')} onChange={e => store.record.extra = e.target.value}/>
       </Form.Item>
-      <Form.Item
+      {type === '4' && <Form.Item
         required
         label={t('脚本内容')}
-        style={getStyle(['4'])}
         extra={<LinkButton onClick={() => setShowTmp(true)}>{t('从模板添加')}</LinkButton>}>
         <ACEditor
           mode="sh"
@@ -168,7 +173,7 @@ export default observer(function () {
           width="100%"
           height="200px"
           onChange={e => store.record.extra = cleanCommand(e)}/>
-      </Form.Item>
+      </Form.Item>}
       <Form.Item label={t('备注信息')}>
         <Input.TextArea value={desc} onChange={e => store.record.desc = e.target.value} placeholder={t('请输入备注信息')}/>
       </Form.Item>
@@ -176,7 +181,7 @@ export default observer(function () {
       <Form.Item wrapperCol={{span: 14, offset: 6}} style={{marginTop: 12}}>
         <Button disabled={!canNext()} type="primary" onClick={toNext}>{t('下一步')}</Button>
         <Button disabled={!canNext()} type="link" loading={loading} onClick={handleTest}>{t('执行测试')}</Button>
-        <span style={{color: '#888', fontSize: 12}}>{t('Tips: 仅测试第一个监控地址')}</span>
+        <span style={{color: '#888', fontSize: 12}}>{type === '7' ? t('Tips: 仅测试第一台监控主机') : t('Tips: 仅测试第一个监控地址')}</span>
       </Form.Item>
       {showTmp && <TemplateSelector onOk={({body}) => store.record.extra = body} onCancel={() => setShowTmp(false)}/>}
     </Form>

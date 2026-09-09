@@ -73,14 +73,14 @@ function Setting(props) {
           <Space wrap className={css.theme} size={12}>
             {Object.entries(themes).map(([key, item]) => (
               <pre key={key} style={{background: item.background, color: item.foreground}}
-                   onClick={() => setTheme(key)}>spug</pre>))}
+                   onClick={() => setTheme(key)}>Moon</pre>))}
           </Space>
         </Form.Item>
         <Form.Item label={t('预览')}>
           <div className={css.preview}
                style={{fontSize, fontFamily, background: styles.background, color: styles.foreground}}>
-            <div>Welcome to Spug !</div>
-            <div>* Website: https://spug.cc</div>
+            <div>Welcome to Moon !</div>
+            <div>* Upstream: https://spug.cc</div>
             <div>[root@iZ8vb48roZ ~]# ls</div>
             <div>
               <span style={{color: styles.brightBlue}}>apps </span>

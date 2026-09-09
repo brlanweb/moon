@@ -28,6 +28,16 @@ function fmtSpeed(kb) {
 function Item(props) {
   const {label, percent, title} = props;
   if (percent === null || percent === undefined) return null;
+  if (props.compact) {
+    return (
+      <Tooltip title={title}>
+        <div className={styles.metricItem}>
+          <span className={styles.metricLabel}>{label}</span>
+          <span style={{fontSize: 12, color: strokeColor(percent)}}>{percent.toFixed(0)}%</span>
+        </div>
+      </Tooltip>
+    )
+  }
   return (
     <Tooltip title={title}>
       <div className={styles.metricItem}>
@@ -114,8 +124,8 @@ export default function Metrics(props) {
   // 秒级采样优先；冷启动的头 1~2 秒回退到全量探针里的差值网速
   const network = netData || (data && data.network);
   return (
-    <div className={styles.metrics}>
-      <Tag icon={<CloudServerOutlined/>} color="blue">{props.hostName}</Tag>
+    <div className={props.inline ? styles.metricsInline : styles.metrics}>
+      {!props.inline && <Tag icon={<CloudServerOutlined/>} color="blue">{props.hostName}</Tag>}
       {loading && !data && <span style={{color: '#999', fontSize: 12}}><SyncOutlined spin/> {t('采集中')}</span>}
       {error && !data && (
         <Tooltip title={error}>
@@ -124,13 +134,13 @@ export default function Metrics(props) {
       )}
       {data && (
         <React.Fragment>
-          <Item label="CPU" percent={data.cpu} title={t('CPU使用率')}/>
-          {gpu && <Item label="GPU" percent={gpu.percent}
+          <Item compact={props.inline} label="CPU" percent={data.cpu} title={t('CPU使用率')}/>
+          {gpu && <Item compact={props.inline} label="GPU" percent={gpu.percent}
                         title={`${t('显存')} ${gpu.memory_used}/${gpu.memory_total}GB`}/>}
-          {data.memory && <Item label={t('内存')} percent={data.memory.percent}
+          {data.memory && <Item compact={props.inline} label={t('内存')} percent={data.memory.percent}
                                 title={`${data.memory.used}/${data.memory.total}GB`}/>}
           {data.swap && !data.swap.disabled && (
-            <Item label="Swap" percent={data.swap.percent}
+            <Item compact={props.inline} label="Swap" percent={data.swap.percent}
                   title={`${data.swap.used}/${data.swap.total}GB`}/>
           )}
           {data.swap && data.swap.disabled && (
@@ -141,7 +151,7 @@ export default function Metrics(props) {
               </div>
             </Tooltip>
           )}
-          {disk && <Item label={t('磁盘')} percent={disk.percent}
+          {disk && <Item compact={props.inline} label={t('磁盘')} percent={disk.percent}
                          title={`${disk.mount} ${disk.used}/${disk.total}GB`}/>}
           {network && (
             <Tooltip title={t('实时网速（所有接口合计）')}>

@@ -9,6 +9,7 @@ from paramiko.dsskey import DSSKey
 from paramiko.ssh_exception import AuthenticationException, SSHException, PasswordRequiredException  # noqa (re-exported)
 from io import StringIO
 from uuid import uuid4
+import shlex
 import time
 import re
 
@@ -89,9 +90,35 @@ class SSH:
         return True
 
     def add_public_key(self, public_key):
-        command = f'mkdir -p -m 700 ~/.ssh && \
-        echo {public_key!r} >> ~/.ssh/authorized_keys && \
-        chmod 600 ~/.ssh/authorized_keys'
+        public_key = public_key.strip()
+        if not public_key or any(char in public_key for char in ('\n', '\r', '\x00')):
+            raise ValueError('public key must be a single non-empty line')
+
+        key_dir = '"$HOME/.ssh"'
+        server_version = self.get_client().get_transport().remote_version.lower()
+        if 'dropbear' in server_version:
+            # OpenWrt patches Dropbear to use a separate root authorized_keys path.
+            code, _ = self.exec_command_raw('test "$(id -u)" = 0 && test -f /etc/openwrt_release')
+            if code == 0:
+                key_dir = '/etc/dropbear'
+
+        command = f'''set -e
+umask 077
+key_dir={key_dir}
+key_file="$key_dir/authorized_keys"
+key={shlex.quote(public_key)}
+mkdir -p "$key_dir"
+chmod 700 "$key_dir"
+touch "$key_file"
+chmod 600 "$key_file"
+if grep -Fqx -- "$key" "$key_file"; then
+    :
+else
+    status=$?
+    [ "$status" -eq 1 ] || exit "$status"
+    if [ -s "$key_file" ]; then printf '\\n' >> "$key_file"; fi
+    printf '%s\\n' "$key" >> "$key_file"
+fi'''
         exit_code, out = self.exec_command_raw(command)
         if exit_code != 0:
             raise Exception(f'add public key error: {out}')
@@ -234,7 +261,7 @@ class SSH:
                     break
             elif counter >= 100:
                 self.client.close()
-                raise Exception('Wait spug response timeout')
+                raise Exception('Wait Moon response timeout')
             else:
                 counter += 1
                 time.sleep(0.1)

@@ -12,7 +12,7 @@ import {
 } from '@ant-design/icons';
 import { NotFound } from 'components';
 import { hasPermission, http, includes, t } from 'libs';
-import LogoSpugText from 'layout/logo-spug-white.png';
+import MoonBrand from 'components/MoonBrand';
 import ConnectionForm from './ConnectionForm';
 import QueryPanel from './QueryPanel';
 import styles from './index.module.less';
@@ -45,7 +45,7 @@ export default function DatabaseConsole() {
   const [record, setRecord] = useState({});
 
   useEffect(() => {
-    document.title = 'Spug database console';
+    document.title = 'Moon database console';
     fetchConnections();
   }, []);
 
@@ -209,7 +209,7 @@ export default function DatabaseConsole() {
     <div className={styles.container}>
       <aside className={styles.sider}>
         <a className={styles.logo} href="/dashboard" target="_blank" rel="noreferrer">
-          <img src={LogoSpugText} alt="Spug"/>
+          <MoonBrand/>
         </a>
         <div className={styles.sourceHeader}>
           <span>{t('数据库连接')}</span>
