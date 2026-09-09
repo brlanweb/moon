@@ -7,15 +7,12 @@ from libs import ModelMixin
 import json
 
 KEYS_DEFAULT = {
-    'MFA': {'enable': False},
     'verify_ip': True,
     'bind_ip': True,
-    'ldap_service': {},
     'api_key': None,
     'mail_service': {},
     'private_key': None,
     'public_key': None,
-    'spug_push_key': None,
 }
 
 

@@ -173,7 +173,7 @@ function Console(props) {
                 ) : outputs[item.id]?.status === 'success' ? (
                   <CheckCircleOutlined style={{color: '#52c41a'}}/>
                 ) : outputs[item.id]?.status === 'doing' ? (
-                  <LoadingOutlined style={{color: '#6c7cff'}}/>
+                  <LoadingOutlined style={{color: '#28786f'}}/>
                 ) : (
                   <ClockCircleOutlined style={{color: '#faad14'}}/>
                 )}
@@ -215,7 +215,7 @@ function Console(props) {
                     ) : outputs[item.id]?.status === 'success' ? (
                       <CheckCircleOutlined style={{color: '#52c41a'}}/>
                     ) : outputs[item.id]?.status === 'doing' ? (
-                      <LoadingOutlined style={{color: '#6c7cff'}}/>
+                      <LoadingOutlined style={{color: '#28786f'}}/>
                     ) : (
                       <ClockCircleOutlined style={{color: '#faad14'}}/>
                     )}

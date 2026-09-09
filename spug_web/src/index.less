@@ -17,66 +17,69 @@ code {
   padding-top: 6px;
 }
 
-/* Jelly style buttons */
+/* Keep Antd's variant and disabled states; never animate button geometry. */
 .ant-btn {
-  border-radius: 10px;
-  transition: transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1),
-    box-shadow 0.2s ease, background 0.2s ease, border-color 0.2s ease,
-    color 0.2s ease;
-
-  &:hover {
-    transform: translateY(-1px);
-  }
-
-  &:active {
-    transform: scale(0.94);
-  }
+  transition: color 0.2s, background-color 0.2s, border-color 0.2s, box-shadow 0.2s;
 }
 
-.ant-btn-primary {
-  background: linear-gradient(180deg, #8a96ff 0%, #6c7cff 100%);
-  border-color: transparent;
-  box-shadow: 0 4px 12px rgba(108, 124, 255, 0.35),
-    inset 0 1px 0 rgba(255, 255, 255, 0.35);
-
-  &:hover,
-  &:focus {
-    background: linear-gradient(180deg, #97a2ff 0%, #7b8aff 100%);
-    border-color: transparent;
-    box-shadow: 0 6px 16px rgba(108, 124, 255, 0.45),
-      inset 0 1px 0 rgba(255, 255, 255, 0.4);
-  }
-
-  &:active {
-    box-shadow: 0 2px 6px rgba(108, 124, 255, 0.35),
-      inset 0 1px 0 rgba(255, 255, 255, 0.3);
-  }
+.ant-btn:focus-visible {
+  outline: 2px solid @primary-color;
+  outline-offset: 2px;
 }
 
-.ant-btn-dangerous.ant-btn-primary {
-  background: linear-gradient(180deg, #ff9a9a 0%, #ff7a7a 100%);
-  box-shadow: 0 4px 12px rgba(255, 122, 122, 0.35),
-    inset 0 1px 0 rgba(255, 255, 255, 0.35);
+.ant-btn-dangerous:focus-visible {
+  outline-color: @error-color;
+}
 
-  &:hover,
-  &:focus {
-    background: linear-gradient(180deg, #ffa8a8 0%, #ff8b8b 100%);
-    box-shadow: 0 6px 16px rgba(255, 122, 122, 0.45),
-      inset 0 1px 0 rgba(255, 255, 255, 0.4);
+/* Antd's generated solid-button hover palette is too light for white text. */
+.ant-layout,
+.ant-modal,
+.ant-drawer,
+.ant-popover,
+.ant-notification {
+  .ant-btn-primary:not([disabled]):not(.ant-btn-background-ghost) {
+    &:hover, &:focus {
+      background: @primary-5;
+      border-color: @primary-5;
+    }
+
+    &:active {
+      background: @primary-7;
+      border-color: @primary-7;
+    }
+
+    &.ant-btn-dangerous {
+      &:hover, &:focus {
+        background: #b94040;
+        border-color: #b94040;
+      }
+
+      &:active {
+        background: #9c3235;
+        border-color: #9c3235;
+      }
+    }
   }
-}
 
-.ant-btn[disabled],
-.ant-btn[disabled]:hover,
-.ant-btn[disabled]:active {
-  transform: none;
-  box-shadow: none;
-  background: #f5f5f5;
-}
+  .ant-btn:not([disabled]):not(.ant-btn-primary):not(.ant-btn-background-ghost) {
+    &:hover, &:focus {
+      color: @primary-5;
+    }
 
-.ant-btn-link,
-.ant-btn-text {
-  box-shadow: none;
+    &:active {
+      color: @primary-7;
+    }
+
+    &.ant-btn-dangerous {
+      &:hover, &:focus {
+        color: #b94040;
+      }
+
+      &:active {
+        color: #9c3235;
+      }
+    }
+  }
 }
 
 /* Common CSS style */
@@ -85,6 +88,10 @@ code {
 }
 
 .btn {
-  color: #6c7cff;
+  color: @primary-color;
   cursor: pointer;
+
+  &:hover {
+    color: @link-hover-color;
+  }
 }

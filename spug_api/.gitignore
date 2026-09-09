@@ -4,10 +4,7 @@
 __pycache__/
 /.idea/
 /db.sqlite3
-migrations/
-!apps/monitor/migrations/
-apps/monitor/migrations/*
-!apps/monitor/migrations/0004_resource_detection.py
+# Schema history must travel with the source, including initial migrations.
 /access.log
 /repos/*
 /logs/*

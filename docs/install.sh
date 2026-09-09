@@ -24,9 +24,9 @@ function init_system_lib() {
     source /etc/os-release
     case $ID in
         centos|fedora|rhel)
-            echo "开始安装/更新可能缺少的依赖: git mariadb-server mariadb-devel python3-devel gcc openldap-devel redis nginx supervisor python36"
+            echo "开始安装/更新可能缺少的依赖: git mariadb-server mariadb-devel python3-devel gcc redis nginx supervisor python36"
             yum install -y epel-release
-            yum install -y git mariadb-server mariadb-devel python3-devel gcc openldap-devel redis nginx supervisor python36
+            yum install -y git mariadb-server mariadb-devel python3-devel gcc redis nginx supervisor python36
             sed -i 's/ default_server//g' /etc/nginx/nginx.conf
             MYSQL_CONF=/etc/my.cnf.d/spug.cnf
             SUPERVISOR_CONF=/etc/supervisord.d/spug.ini
@@ -35,9 +35,9 @@ function init_system_lib() {
             ;;
 
         debian|ubuntu|devuan)
-            echo "开始安装/更新可能缺少的依赖: git mariadb-server libmariadbd-dev python3-venv libsasl2-dev libldap2-dev redis-server nginx supervisor"
+            echo "开始安装/更新可能缺少的依赖: git mariadb-server libmariadbd-dev python3-venv redis-server nginx supervisor"
             apt update
-            apt install -y git mariadb-server libmariadbd-dev python3-dev python3-venv libsasl2-dev libldap2-dev redis-server nginx supervisor
+            apt install -y git mariadb-server libmariadbd-dev python3-dev python3-venv redis-server nginx supervisor
             rm -f /etc/nginx/sites-enabled/default
             MYSQL_CONF=/etc/mysql/conf.d/spug.cnf
             SUPERVISOR_CONF=/etc/supervisor/conf.d/spug.conf

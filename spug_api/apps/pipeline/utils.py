@@ -7,10 +7,8 @@ from apps.host.models import Host
 from libs.utils import AttrDict, human_datetime, render_str
 from libs.executor import Executor
 from libs.gitlib import RemoteGit
-from libs.push import send_message
 from libs import webhook
 from apps.pipeline.helper import Helper
-from apps.setting.utils import AppSetting
 from functools import partial
 from threading import Thread
 from concurrent import futures
@@ -27,7 +25,6 @@ PUSH_MODULES = {
     'push_dd': '钉钉',
     'push_fs': '飞书',
     'push_wx': '企业微信',
-    'push_spug': '推送助手',
 }
 
 DEFAULT_PUSH_TITLE = '流水线执行通知'
@@ -132,33 +129,19 @@ class NodeExecutor:
         at_all = bool(node.get('at_all'))
         warning = None
 
-        if mode == 'push_spug':
-            targets = node.get('targets') or []
-            if not targets:
-                return '未选择推送对象'
-            token = AppSetting.get_default('spug_push_key')
-            if not token:
-                return '未绑定推送助手账户，请在 系统管理/系统设置/推送服务设置 中完成绑定'
-            send_message(token, targets, 'monitor', {
-                'title': title,
-                'target': self.pipe_name or node.get('name') or '',
-                'message': content,
-                'duration': '',
-                'event': '1' if state == 'error' else '2',
-            })
-            self.helper.send(node.id, f'推送对象: {", ".join(str(x) for x in targets)}\r\n')
+        if mode not in PUSH_MODULES:
+            return '该推送通道已移除，请重新选择节点模块'
+        url = node.get('url')
+        if not url:
+            return '未配置 Webhook 地址'
+        secret = node.get('secret') or None
+        if mode == 'push_dd':
+            webhook.push_dd(url, secret, title, content, at_all)
+        elif mode == 'push_fs':
+            color = {'success': 'green', 'error': 'red'}.get(state, 'blue')
+            webhook.push_fs(url, secret, title, content, at_all, color)
         else:
-            url = node.get('url')
-            if not url:
-                return '未配置 Webhook 地址'
-            secret = node.get('secret') or None
-            if mode == 'push_dd':
-                webhook.push_dd(url, secret, title, content, at_all)
-            elif mode == 'push_fs':
-                color = {'success': 'green', 'error': 'red'}.get(state, 'blue')
-                webhook.push_fs(url, secret, title, content, at_all, color)
-            else:
-                warning = webhook.push_wx(url, title, content, at_all)
+            warning = webhook.push_wx(url, title, content, at_all)
 
         self.helper.send(node.id, f'标题: {title}\r\n')
         if warning:

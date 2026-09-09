@@ -7,12 +7,9 @@ const dict = {
   // Login page
   '灵活、强大、易用的开源运维平台': 'A flexible, powerful and easy-to-use open source DevOps platform',
   '普通登录': 'Password',
-  'LDAP登录': 'LDAP',
   '请输入账户': 'Username',
   '请输入密码': 'Password',
-  '请输入验证码': 'Verification code',
-  '获取验证码': 'Send code',
-  '{} 秒后重新获取': 'Resend in {}s',
+  '登录服务不兼容，请联系管理员完成升级': 'The sign-in service is incompatible. Contact an administrator to finish the upgrade.',
   '登录': 'Sign in',
   '安全警告': 'Security warning',
   '未能获取到访问者的真实IP，无法提供基于请求来源IP的合法性验证，详细信息请参考':
@@ -26,9 +23,12 @@ const dict = {
   '请求异常: {}': 'Request error: {}',
 
   // Layout / notifications
+  '管理员': 'Administrator',
   '知道了': 'Got it',
   '全部 已读': 'Mark all as read',
-  '检测到您在移动设备上访问，请使用横屏模式。': 'Mobile device detected, please use landscape mode.',
+  '导航': 'Navigation',
+  '展开导航': 'Open navigation',
+  '收起导航': 'Close navigation',
   '抱歉，你访问的页面不存在': 'Sorry, the page you visited does not exist',
 
   // Shared components

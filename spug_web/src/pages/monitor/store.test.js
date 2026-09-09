@@ -56,6 +56,16 @@ test('existing group, name, type and active filters still apply', () => {
   expect(store.recordsFor()).toEqual([]);
 });
 
+test('translated overview types match the list filter instead of the legacy Chinese type', () => {
+  store.records[0].type_alias = 'Site check';
+  store.overviews[0].type = '站点检测';
+  store.overviews[0].type_alias = 'Site check';
+  store.f_type = 'Site check';
+  expect(store.overviewsFor().map(x => x.id)).toEqual(['1_https://example.com']);
+  delete store.overviews[0].type_alias;
+  expect(store.overviewsFor().map(x => x.id)).toEqual(['1_https://example.com']);
+});
+
 test('resource creation defaults to CPU 80 percent with AI disabled', () => {
   store.record = {type: '6', targets: [1], ai_mode: 'repair'};
   store.showForm(undefined, true);

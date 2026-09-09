@@ -8,7 +8,6 @@ channels-redis >= 4.1.0, < 5.0.0
 django_redis >= 5.4.0, < 6.0.0
 asgiref==3.7.2
 requests >= 2.31.0, < 3.0.0
-python-ldap==3.4.3
 GitPython==3.1.40
 openpyxl==3.1.2
 user_agents==2.2.0
@@ -19,3 +18,5 @@ clickhouse-connect >= 0.7.0, < 1.0.0
 # 智能体循环与原生 function calling；版本锁定，挂起的审批可能跨版本恢复
 pydantic-ai-slim[openai] == 2.37.0
 redis >= 5.0.0, < 7.0.0
+# Official Model Context Protocol Python SDK (v2 API, Python >= 3.10)
+mcp == 2.2.0

@@ -91,21 +91,31 @@ test('missing real IP shows a non-blocking warning and logs in without confirmat
   expect(document.querySelector('.ant-notification-notice')).not.toBeNull();
 });
 
-test('MFA displays a code field and submits the entered code', async () => {
+test('stale LDAP preference exposes no directory login and only submits local credentials', async () => {
+  act(() => { ReactDOM.unmountComponentAtNode(root); });
+  localStorage.setItem('login_type', 'ldap');
+  act(() => { ReactDOM.render(<Login/>, root); });
+  expect(root.textContent).not.toContain('LDAP');
+  expect(root.querySelector('[role="tab"]')).toBeNull();
+  http.post.mockResolvedValue({id: 7, access_token: 'local-session', nickname: 'Operator', is_supper: false, permissions: [], has_real_ip: true});
+  await fill('username', 'operator');
+  await fill('password', 'test-password');
+  await submit();
+  expect(http.post).toHaveBeenCalledWith('/api/account/login/', {username: 'operator', password: 'test-password', type: 'default'});
+  expect(localStorage.getItem('login_type')).toBeNull();
+  expect(localStorage.getItem('token')).toBe('local-session');
+});
+
+test('retired MFA responses do not create a session or expose a code form', async () => {
   http.post.mockResolvedValueOnce({required_mfa: true, has_real_ip: false});
   await fill('username', 'operator');
   await fill('password', 'test-password');
   await submit();
-  expect(root.querySelector('input[name="captcha"]')).not.toBeNull();
-  expect(root.textContent).toContain('秒后重新获取');
+  expect(root.querySelector('input[name="captcha"]')).toBeNull();
+  expect(root.textContent).not.toContain('获取验证码');
   expect(localStorage.getItem('token')).toBeNull();
   expect(history.push).not.toHaveBeenCalled();
-  expect(document.querySelector('.ant-notification-notice')).toBeNull();
-  http.post.mockResolvedValueOnce({id: 7, access_token: 'mfa-session', nickname: 'Operator', is_supper: false, permissions: [], has_real_ip: true});
-  await fill('captcha', '123456');
-  await submit();
-  expect(http.post).toHaveBeenLastCalledWith('/api/account/login/', {username: 'operator', password: 'test-password', captcha: '123456', type: 'default'});
-  expect(localStorage.getItem('token')).toBe('mfa-session');
+  expect(document.querySelector('.ant-notification-notice').textContent).toContain('登录服务不兼容');
 });
 
 test('a rejected request enables retry without losing credentials', async () => {

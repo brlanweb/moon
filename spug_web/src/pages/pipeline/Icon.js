@@ -10,7 +10,6 @@ import iconBuild from './assets/icon_build.png';
 import iconParameter from './assets/icon_parameter.png';
 import iconDataTransfer from './assets/icon_data_transfer.png';
 import iconDataUpload from './assets/icon_data_upload.png';
-import iconPushSpug from './assets/icon_push_spug.png';
 import iconPushDD from './assets/icon_push_dd.png';
 import iconPushFS from './assets/icon_push_fs.png';
 import iconPushWx from './assets/icon_push_wx.svg';
@@ -45,8 +44,6 @@ function Icon(props) {
       return <Avatar size={props.size || 42} src={iconDataTransfer}/>
     case 'data_upload':
       return <Avatar size={props.size || 42} src={iconDataUpload}/>
-    case 'push_spug':
-      return <Avatar size={props.size || 42} src={iconPushSpug}/>
     case 'push_dd':
       return <Avatar size={props.size || 42} src={iconPushDD}/>
     case 'push_fs':

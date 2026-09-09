@@ -244,6 +244,20 @@ export default [{
     ]
   }]
 }, {
+  key: 'system',
+  label: t('系统管理'),
+  pages: [{
+    key: 'mcp',
+    label: t('MCP 操作'),
+    perms: [
+      {key: 'view', label: t('查看 MCP 令牌和日志')},
+      {key: 'add', label: t('创建 MCP 令牌')},
+      {key: 'edit', label: t('重新生成 MCP 令牌')},
+      {key: 'del', label: t('撤销 MCP 令牌')},
+      {key: 'use', label: t('使用 MCP 操作服务器')},
+    ]
+  }]
+}, {
   key: 'alarm',
   label: t('报警中心'),
   pages: [{

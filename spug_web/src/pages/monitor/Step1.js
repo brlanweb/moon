@@ -154,7 +154,7 @@ export default observer(function () {
       </Form.Item>
       {type === '7' && <ResourceFields value={extra} onChange={value => store.record.extra = value}/>}
       <Form.Item label={t('响应时间')} style={getStyle(['1'])}>
-        <Input suffix="ms" value={extra} placeholder={t('最长响应时间（毫秒），不设置则默认10秒超时')}
+        <Input suffix="ms" value={extra} placeholder={t('最长响应时间（毫秒），不设置则默认30秒超时')}
                onChange={e => store.record.extra = e.target.value}/>
       </Form.Item>
       <Form.Item required label={t('检测端口')} style={getStyle(['2'])}>

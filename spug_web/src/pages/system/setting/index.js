@@ -8,10 +8,8 @@ import { Menu } from 'antd';
 import { AuthDiv, Breadcrumb } from 'components';
 import { t } from 'libs';
 import AlarmSetting from './AlarmSetting';
-import LDAPSetting from './LDAPSetting';
 import OpenService from './OpenService';
 import KeySetting from './KeySetting';
-import PushSetting from './PushSetting';
 import SecuritySetting from './SecuritySetting';
 import About from './About';
 import styles from './index.module.css';
@@ -48,19 +46,15 @@ class Index extends React.Component {
               onSelect={({selectedKeys}) => this.setState({selectedKeys})}
               items={[
                 {key: 'security', label: t('安全设置')},
-                {key: 'ldap', label: t('LDAP设置')},
                 {key: 'key', label: t('密钥设置')},
                 {key: 'alarm', label: t('报警服务设置')},
-                {key: 'push', label: t('推送服务设置')},
                 {key: 'service', label: t('开放服务设置')},
                 {key: 'about', label: t('关于')}
               ]}/>
           </div>
           <div className={styles.right}>
             {selectedKeys[0] === 'security' && <SecuritySetting/>}
-            {selectedKeys[0] === 'ldap' && <LDAPSetting/>}
             {selectedKeys[0] === 'alarm' && <AlarmSetting/>}
-            {selectedKeys[0] === 'push' && <PushSetting/>}
             {selectedKeys[0] === 'service' && <OpenService/>}
             {selectedKeys[0] === 'key' && <KeySetting/>}
             {selectedKeys[0] === 'about' && <About/>}

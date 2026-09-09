@@ -1,1 +1,3 @@
 /.idea/
+/.superpowers/
+/tests/__pycache__/

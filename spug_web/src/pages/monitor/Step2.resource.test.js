@@ -28,6 +28,16 @@ afterEach(() => {
   root.remove();
 });
 
+test('legacy monitor channels are explicitly marked as retired', async () => {
+  store.record.notify_mode = ['1', '4'];
+  await act(async () => {ReactDOM.render(<MemoryRouter><Step2/></MemoryRouter>, root);});
+  expect(root.querySelector('.ant-alert-error').textContent).toContain('包含已下线的报警方式');
+  expect(root.textContent).toContain('邮件');
+  expect(root.textContent).toContain('钉钉');
+  expect(root.textContent).toContain('企业微信');
+  expect(root.textContent).toContain('飞书');
+});
+
 test.each([false, true])('resource submission reuses alert settings, editing=%s', async editing => {
   if (editing) Object.assign(store.record, {id: 12, rate: 15, threshold: 2, quiet: 60,
     extra: {...resourceDefaults('disk'), value: 91.5, mount: '/data'}});

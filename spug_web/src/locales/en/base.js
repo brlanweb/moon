@@ -18,6 +18,8 @@ const base = {
   '验证码': 'Verification code',
   '账户': 'Account',
   '上游源码': 'Upstream source',
+  '项目源码': 'Project source',
+  '许可证': 'License',
   '上游文档': 'Upstream docs',
   // Common actions
   '新建': 'New',
@@ -206,7 +208,6 @@ const base = {
   '企业微信': 'WeCom',
   '短信': 'SMS',
   '邮件': 'Email',
-  '推送助手': 'Push Assistant',
   'Webhook': 'Webhook',
 };
 

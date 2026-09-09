@@ -10,7 +10,6 @@ import Parameter from './Parameter';
 import DataUpload from './DataUpload';
 import DataTransfer from './DataTransfer';
 import PushWebhook from './PushWebhook';
-import PushSpug from './PushSpug';
 import { t } from 'libs';
 
 // 未选择模块时必须把 handler 清掉：NodeConfig 里的 handler 是 useState，切换节点时
@@ -20,7 +19,9 @@ function Empty(props) {
     props.setHandler(undefined)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.node])
-  return <div style={{padding: 24, color: '#999'}}>{t('请选择节点模块')}</div>
+  return <div style={{padding: 24, color: '#999'}}>{props.node.module
+    ? t('该节点模块已移除或不受支持，请重新选择节点模块')
+    : t('请选择节点模块')}</div>
 }
 
 function ModuleConfig(props) {
@@ -39,8 +40,6 @@ function ModuleConfig(props) {
     case 'push_fs':
     case 'push_wx':
       return <PushWebhook {...props}/>
-    case 'push_spug':
-      return <PushSpug {...props}/>
     default:
       return <Empty {...props}/>
   }

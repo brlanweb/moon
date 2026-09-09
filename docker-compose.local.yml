@@ -36,6 +36,8 @@ services:
     ports:
       - "127.0.0.1:8000:80"
     environment:
+      MOON_MCP_RESOURCE_URL: "${MOON_MCP_RESOURCE_URL:-http://127.0.0.1:8000/mcp}"
+      MOON_MCP_ISSUER_URL: "${MOON_MCP_ISSUER_URL:-http://127.0.0.1:8000}"
       SPUG_DEBUG: "true"
       SPUG_DB_ENGINE: django.db.backends.mysql
       SPUG_DB_NAME: spug

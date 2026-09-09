@@ -32,7 +32,7 @@ class BaseConsumer(WebsocketConsumer):
         token = parse_qs(query_string).get('x-token', [''])[0]
         if token and len(token) == 32:
             user = User.objects.filter(access_token=token).first()
-            if user and user.token_expired >= time.time() and user.is_active:
+            if user and user.type == 'default' and user.token_expired >= time.time() and user.is_active:
                 if x_real_ip == user.last_ip or AppSetting.get_default('bind_ip') is False:
                     self.user = user
                     if hasattr(self, 'init'):

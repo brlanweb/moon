@@ -45,6 +45,8 @@ class PipeView(View):
             Argument('nodes', type=list, handler=json.dumps, default='[]')
         ).parse(request.body)
         if error is None:
+            if any(x.get('module') == 'push_spug' for x in json.loads(form.nodes)):
+                return json_response(error='推送助手节点已移除，请删除或替换该节点后保存。')
             if form.id:
                 Pipeline.objects.filter(pk=form.id).update(**form)
                 pipe = Pipeline.objects.get(pk=form.id)
@@ -61,6 +63,8 @@ class PipeView(View):
             Argument('nodes', type=list, handler=json.dumps, required=False),
         ).parse(request.body, True)
         if error is None:
+            if 'nodes' in form and any(x.get('module') == 'push_spug' for x in json.loads(form.nodes)):
+                return json_response(error='推送助手节点已移除，请删除或替换该节点后保存。')
             Pipeline.objects.filter(pk=form.id).update(**form)
         return json_response(error=error)
 
@@ -83,6 +87,8 @@ class DoView(View):
         if error is None:
             pipe = Pipeline.objects.get(pk=form.id)
             nodes, ids = json.loads(pipe.nodes), set()
+            if any(x.get('module') == 'push_spug' for x in nodes):
+                return json_response(error='推送助手节点已移除，请删除或替换该节点后执行。')
             for item in filter(lambda x: x.get('module') == 'ssh_exec', nodes):
                 ids.update(item['targets'])
             for item in filter(lambda x: x.get('module') == 'data_transfer', nodes):
@@ -156,6 +162,8 @@ class DoView(View):
                     form.params[k] = ','.join(str(x) for x in v)
             pipe = Pipeline.objects.get(pk=form.id)
             nodes = json.loads(pipe.nodes)
+            if any(x.get('module') == 'push_spug' for x in nodes):
+                return json_response(error='推送助手节点已移除，请删除或替换该节点后执行。')
             for item in nodes:
                 if item.get('module') == 'parameter':
                     item['dynamic_params'] = form.params

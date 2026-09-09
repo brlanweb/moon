@@ -1,21 +1,14 @@
 # Copyright: (c) OpenSpug Organization. https://github.com/openspug/spug
-# Copyright: (c) <spug.dev@gmail.com>
-# Released under the AGPL-3.0 License.
-"""
-ASGI config for spug project.
+"""ASGI config for Django HTTP and existing Channels WebSockets.
 
-Exposes both the HTTP application and the websocket routes defined in
-consumer.routing, so `daphne spug.asgi:application` serves websockets.
+Moon MCP runs as a dedicated Uvicorn process via spug.mcp_asgi so its lifespan
+is always started; Daphne remains responsible for this application.
 """
-
 import os
 
 from django.core.asgi import get_asgi_application
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'spug.settings')
-
-# get_asgi_application() calls django.setup(); it must run before importing
-# anything that touches models (consumer.routing imports consumers/models).
 django_asgi_app = get_asgi_application()
 
 from channels.routing import ProtocolTypeRouter  # noqa: E402

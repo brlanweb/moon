@@ -53,7 +53,7 @@ class ComTable extends React.Component {
       <Action>
         <Action.Button onClick={() => this.handleActive(info)}>{info['is_active'] ? t('禁用') : t('启用')}</Action.Button>
         <Action.Button onClick={() => store.showForm(info)}>{t('编辑')}</Action.Button>
-        <Action.Button disabled={info['type'] === 'ldap'} onClick={() => this.handleReset(info)}>{t('重置密码')}</Action.Button>
+        <Action.Button disabled={info['type'] !== 'default'} onClick={() => this.handleReset(info)}>{t('重置密码')}</Action.Button>
         <Action.Button danger onClick={() => this.handleDelete(info)}>{t('删除')}</Action.Button>
       </Action>
     )

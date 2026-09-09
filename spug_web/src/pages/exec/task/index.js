@@ -5,7 +5,7 @@
  */
 import React, { useState, useEffect } from 'react';
 import { observer } from 'mobx-react';
-import { PlusOutlined, ThunderboltOutlined, BulbOutlined, QuestionCircleOutlined } from '@ant-design/icons';
+import { PlusOutlined, ThunderboltOutlined, BulbOutlined, QuestionCircleOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { Form, Button, Radio, Tooltip } from 'antd';
 import { ACEditor, AuthDiv, Breadcrumb } from 'components';
 import HostSelector from 'pages/host/Selector';
@@ -13,6 +13,7 @@ import TemplateSelector from './TemplateSelector';
 import Parameter from './Parameter';
 import Output from './Output';
 import { http, cleanCommand, t } from 'libs';
+import history from 'libs/history';
 import moment from 'moment';
 import store from './store';
 import gStore from 'gStore';
@@ -106,12 +107,14 @@ function TaskIndex() {
           </Form.Item>
           <Button loading={loading} icon={<ThunderboltOutlined/>} type="primary"
                   onClick={() => handleSubmit()}>{t('开始执行')}</Button>
+          <Button icon={<SafetyCertificateOutlined/>} style={{marginLeft: 8}}
+                  onClick={() => history.push('/system/mcp?tab=logs')}>MCP 操作日志</Button>
         </Form>
 
         <div className={style.right}>
           <div className={style.title}>
             {t('执行记录')}
-            <Tooltip title={t('多次相同的执行记录将会合并展示，每天自动清理，保留最近30条记录。')}>
+            <Tooltip title={t('多次相同的执行记录将会合并展示，每天自动清理，每个账户保留最近10条记录。')}>
               <QuestionCircleOutlined style={{color: '#999', marginLeft: 8}}/>
             </Tooltip>
           </div>

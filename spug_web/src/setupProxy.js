@@ -15,17 +15,17 @@ module.exports = function (app) {
     // 添加错误处理
     onError: (err, req, res) => {
       console.log('Proxy error:', err.message);
-      if (!res.headersSent) {
+      if (!res.headersSent && typeof res.writeHead === 'function') {
         res.writeHead(500, {
           'Content-Type': 'application/json',
         });
         res.end(JSON.stringify({ error: 'Proxy error' }));
+      } else if (typeof res.destroy === 'function') {
+        res.destroy();
       }
     },
     // 添加连接配置
     timeout: 30000,
-    proxyTimeout: 30000,
-    // 禁用 WebSocket 自动升级，避免连接问题
-    ws: false
+    proxyTimeout: 30000
   }))
 };

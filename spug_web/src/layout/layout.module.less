@@ -1,57 +1,78 @@
 .header {
   display: flex;
-  flex-direction: row;
-  padding: 0 12px 0 0;;
+  align-items: center;
+  padding: 0 12px 0 0;
   height: 48px;
   line-height: 48px;
   background: #fff;
-  box-shadow: 0 1px 4px rgba(0, 21, 41, 0.08);
+  color: #49525a;
+  border-bottom: 1px solid #e4e7e9;
   z-index: 2;
 
   .left {
     flex: 1;
+    min-width: 44px;
   }
 
   .terminal {
-    padding: 0 12px;
+    flex-shrink: 0;
+    width: 44px;
+    height: 48px;
     cursor: pointer;
-    line-height: 48px;
     display: flex;
     justify-content: center;
     align-items: center;
 
     &:hover {
-      background: rgba(0, 0, 0, 0.025);
+      background: #f0f4f3;
+      color: #28786f;
     }
   }
 
   .user {
+    min-width: 0;
+
     .action {
       cursor: pointer;
       padding: 0 12px;
-      display: inline-block;
-      transition: all 0.3s;
-      height: 100%;
+      display: block;
+      max-width: 200px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      transition: background-color 0.2s, color 0.2s;
+      height: 48px;
     }
 
     .action:hover {
-      background: rgba(0, 0, 0, 0.025);
+      background: #f0f4f3;
     }
   }
 
   .trigger {
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: 44px;
+    height: 48px;
     cursor: pointer;
-    transition: all 0.3s, padding 0s;
-    padding: 0 12px;
+    transition: background-color 0.2s, color 0.2s;
   }
 
   .trigger:hover {
-    background: rgba(0, 0, 0, 0.025);
+    background: #f0f4f3;
+    color: #28786f;
   }
 }
 
 .notify {
   width: 350px;
+  max-width: calc(100vw - 24px);
   padding: 0;
 
   .item {
@@ -61,14 +82,15 @@
   }
 
   .item:hover {
-    background-color: rgb(233, 247, 254);
+    background-color: #f0f4f3;
   }
 
   .btn {
     line-height: 46px;
     text-align: center;
     cursor: pointer;
-    border-top: 1px solid #e8e8e8;
+    border-top: 1px solid #e4e7e9;
+    color: #28786f;
   }
 }
 
@@ -77,35 +99,60 @@
 }
 
 .content {
+  --moon-content-padding: 24px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 24px 24px 0;
-  overflow-y: scroll;
+  min-width: 0;
+  padding: var(--moon-content-padding) var(--moon-content-padding) 0;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #c2c8cc transparent;
 }
 
 .content::-webkit-scrollbar {
-  width: 0;
-  height: 0;
+  width: 6px;
+  height: 6px;
+}
+
+.content::-webkit-scrollbar-thumb {
+  background: #c2c8cc;
+  border-radius: 4px;
 }
 
 .sider {
-  height: 100%;
-  width: 208px;
-  min-height: 100vh;
-  box-shadow: 2px 0 8px 0 rgba(29, 35, 41, 0.05);
+  height: 100vh;
+  height: 100dvh;
+  background: #272b30;
   overflow: hidden;
 
-  .menus {
-    overflow: auto;
+  :global(.ant-layout-sider-children) {
+    display: flex;
+    flex-direction: column;
   }
 
-  .menus::-webkit-scrollbar {
-    width: 0;
-    height: 0;
+  .menuScroll {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    scrollbar-width: thin;
+    scrollbar-color: #596168 transparent;
+  }
+
+  .menuScroll::-webkit-scrollbar {
+    width: 4px;
+  }
+
+  .menuScroll::-webkit-scrollbar-thumb {
+    background: #596168;
+  }
+
+  .menus {
+    padding: 8px 0;
   }
 
   .logo {
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -113,6 +160,7 @@
     line-height: 1;
     overflow: hidden;
     text-align: center;
+    border-bottom: 1px solid #373d43;
   }
 
   .logo img {
@@ -120,10 +168,15 @@
   }
 }
 
+.sider + :global(.ant-layout) {
+  min-width: 0;
+}
+
 .footer {
   width: 100%;
   padding: 20px;
-  font-size: 14px;
+  font-size: 13px;
+  color: #667078;
   text-align: center;
   display: flex;
   flex-direction: column;
@@ -132,7 +185,52 @@
     margin-bottom: 7px;
 
     .item {
-      margin-right: 40px;
+      margin: 0 20px;
+    }
+  }
+}
+
+.mobileDrawer {
+  :global(.ant-drawer-body) {
+    overflow: hidden;
+  }
+
+  .sider {
+    height: 100%;
+  }
+
+  .logo {
+    display: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .content {
+    --moon-content-padding: 16px;
+  }
+
+  .header {
+    padding-right: 0;
+
+    .terminal, .trigger {
+      width: 36px;
+    }
+
+    .left {
+      min-width: 36px;
+    }
+
+    .user .action {
+      max-width: 120px;
+      padding: 0 8px;
+    }
+  }
+
+  .footer {
+    padding: 16px 0;
+
+    .links .item {
+      margin: 0 8px;
     }
   }
 }

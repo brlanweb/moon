@@ -23,7 +23,13 @@ def send_task_notify(task, success, msg, analyzed=False, analysis_ok=True):
     rst_notify = json.loads(task.rst_notify or '{}')
     mode = rst_notify.get('mode')
     url = rst_notify.get('value')
-    if mode != '0' and url:
+    if mode in (None, '0'):
+        return
+    if mode not in ('1', '2', '3', '4', '5'):
+        Notify.make_schedule_notify(
+            '任务通知配置已失效', f'任务：{task.name}。请重新选择有效的通知方式。')
+        return
+    if url:
         _do_notify(task, mode, url, success, msg, analyzed, analysis_ok)
 
 

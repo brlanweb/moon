@@ -81,9 +81,10 @@ export default function (props) {
   return (
     <Layout.Header className={styles.header}>
       <div className={styles.left}>
-        <div className={styles.trigger} onClick={props.toggle}>
+        <button type="button" className={styles.trigger} onClick={props.toggle}
+                aria-label={t(props.collapsed ? '展开导航' : '收起导航')} aria-expanded={!props.collapsed}>
           {props.collapsed ? <MenuUnfoldOutlined/> : <MenuFoldOutlined/>}
-        </div>
+        </button>
       </div>
       <Notification/>
       <AuthDiv className={styles.terminal} auth="host.console.view|host.console.list" title={t('Web终端')} onClick={openTerminal}>
@@ -101,7 +102,7 @@ export default function (props) {
         <Dropdown menu={userMenu} style={{background: '#000'}}>
           <span className={styles.action}>
             <Avatar size="small" src={avatar} style={{marginRight: 8}}/>
-            {localStorage.getItem('nickname')}
+            {t(localStorage.getItem('nickname'))}
           </span>
         </Dropdown>
       </div>

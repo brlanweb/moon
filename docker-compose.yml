@@ -24,6 +24,8 @@ services:
       - ./docs/docker/nginx-host.conf:/etc/nginx/nginx.conf:ro
 
     environment:
+      MOON_MCP_RESOURCE_URL: "${MOON_MCP_RESOURCE_URL:-http://127.0.0.1:8089/mcp}"
+      MOON_MCP_ISSUER_URL: "${MOON_MCP_ISSUER_URL:-http://127.0.0.1:8089}"
       SPUG_SECRET_KEY: "${SPUG_SECRET_KEY:?SPUG_SECRET_KEY is required}"
       SPUG_ALLOWED_HOSTS: "${SPUG_ALLOWED_HOSTS:-127.0.0.1,localhost}"
       SPUG_DB_ENGINE: "${SPUG_DB_ENGINE:?SPUG_DB_ENGINE is required}"

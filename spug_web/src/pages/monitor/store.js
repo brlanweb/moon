@@ -37,7 +37,12 @@ class Store {
 
   @computed get ovDataSource() {
     let records = this.overviews;
-    if (this.f_type) records = records.filter(x => x.type === this.f_type);
+    if (this.f_type) {
+      // 兼容尚未重载的新旧接口，按稳定的监控 ID 回退到列表中的展示类型。
+      const types = new Map(this.records.map(item => [String(item.id), item.type_alias]));
+      records = records.filter(x =>
+        (x.type_alias || types.get(String(x.id).split('_')[0]) || x.type) === this.f_type);
+    }
     if (this.f_group) records = records.filter(x => x.group === this.f_group);
     if (this.f_name) records = records.filter(x => includes(x.name, this.f_name));
     return records

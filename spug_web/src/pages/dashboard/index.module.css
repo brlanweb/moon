@@ -11,16 +11,16 @@
 .spanButtonActive {
   cursor: pointer;
   margin-right: 24px;
-  color: #6c7cff;
+  color: #28786f;
 }
 
 .spanButton:hover {
-  color: #6c7cff;
+  color: #28786f;
 }
 
 .spanText {
   cursor: pointer;
-  color: #6c7cff;
+  color: #28786f;
   padding: 0 4px;
 }
 

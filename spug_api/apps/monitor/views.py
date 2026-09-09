@@ -6,6 +6,7 @@ from django.conf import settings
 from django_redis import get_redis_connection
 from libs import json_response, JsonParser, Argument, AttrDict, human_datetime, auth
 from apps.monitor.models import Detection, AI_LOOP_LIMITS
+from apps.alarm.models import Alarm
 from apps.monitor.executors import dispatch
 from apps.monitor.docker import (
     clear_repair_policy, repair_target_key, validate_and_normalize_scope)
@@ -112,7 +113,9 @@ class DetectionView(View):
             Argument('threshold', type=int, default=3),
             Argument('quiet', type=int, default=24 * 60),
             Argument('notify_grp', type=list, help='请选择报警联系组'),
-            Argument('notify_mode', type=list, help='请选择报警方式'),
+            Argument('notify_mode', type=list,
+                     filter=lambda modes: all(isinstance(mode, str) and mode in dict(Alarm.MODES) for mode in modes),
+                     help='报警方式已下线或不受支持，请重新选择报警方式'),
             Argument('ai_mode', default='', filter=lambda x: x in ('', 'diagnose', 'repair'),
                      help='请选择正确的AI前置任务类型'),
             Argument('ai_host_id', type=int, required=False),
@@ -123,8 +126,7 @@ class DetectionView(View):
         if error is None and form.type == '7':
             error = prepare_resource_form(request.user, form)
         if error is None:
-            # 报警方式不做任何前置拦截：渠道未配置时由 libs/spug.py 在实际发送阶段
-            # 给出站内通知，配置保存本身不再被阻断。
+            # Supported channels may be configured later; delivery errors remain site notifications.
             if form.ai_mode:
                 if not form.ai_host_id:
                     return json_response(error='启用AI前置任务时必须选择用于排查的主机')
@@ -166,6 +168,9 @@ class DetectionView(View):
         ).parse(request.body, True)
         if error is None:
             task = Detection.objects.filter(pk=form.id).first()
+            if task and form.get('is_active') is True and any(
+                    mode not in dict(Alarm.MODES) for mode in json.loads(task.notify_mode)):
+                return json_response(error='报警方式已下线或不受支持，请重新选择报警方式')
             if task and task.type == '7' and form.get('is_active') is True:
                 try:
                     resource_form = AttrDict(
@@ -251,6 +256,7 @@ def get_overview(request):
                 'group': item.group,
                 'name': item.name,
                 'type': item.get_type_display(),
+                'type_alias': item.get_type_display(),
                 'target': names[key] if item.type == '7' else key,
                 'desc': item.desc,
                 'status': '0',

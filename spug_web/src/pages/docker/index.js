@@ -40,10 +40,6 @@ export default function DockerConsole({section, location, path, match} = {}) {
     return () => { cancelled = true; };
   }, []);
 
-  useEffect(() => {
-    document.title = `Moon Docker - ${t(SECTION_LABELS[currentSection])}`;
-  }, [currentSection]);
-
   if (currentSection === 'projects') {
     return <ProjectConsole key={hostId === undefined ? 'none' : hostId}
                            hosts={hosts} hostId={hostId} onHostChange={setHostId}/>;

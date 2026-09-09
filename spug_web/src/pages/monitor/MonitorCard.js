@@ -28,11 +28,11 @@ const StatusMap = {
 }
 
 function CardItem(props) {
-  const {status, type, group, desc, name, target, latest_run_time} = props.data
+  const {status, type, type_alias, group, desc, name, target, latest_run_time} = props.data
   const title = (
     <div>
       <div>{t('分组')}: {group}</div>
-      <div>{t('类型')}: {type}</div>
+      <div>{t('类型')}: {type_alias || t(type)}</div>
       <div>{t('名称')}: {name}</div>
       <div>{t('目标')}: {target}</div>
       <div>{t('状态')}: {StatusMap[status]}</div>
@@ -109,7 +109,7 @@ function MonitorCard({resourceOnly = false}) {
           })}
           <Tooltip title={t('自动刷新')}>
             <div className={styles.autoLoad} onClick={handleAutoReload}>
-              {autoReload ? <SyncOutlined spin style={{color: '#6c7cff'}}/> : <ReloadOutlined/>}
+              {autoReload ? <SyncOutlined spin style={{color: '#28786f'}}/> : <ReloadOutlined/>}
             </div>
           </Tooltip>
         </div>

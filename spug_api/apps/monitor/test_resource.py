@@ -224,7 +224,7 @@ class ResourceApiTests(SimpleTestCase):
 
     def payload(self, **kwargs):
         return dict(type='7', name='resource', group='ops', targets=[7], extra=CONFIG,
-                    notify_grp=[1], notify_mode=['1'], **kwargs)
+                    notify_grp=[1], notify_mode=['4'], **kwargs)
 
     def request(self, payload, method='post'):
         request = getattr(self.factory, method)('/monitor/', json.dumps(payload), content_type='application/json')

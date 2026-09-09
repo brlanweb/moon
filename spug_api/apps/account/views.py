@@ -6,12 +6,10 @@ from django.conf import settings
 from django.http.response import HttpResponse
 from libs.mixins import AdminView, View
 from libs import JsonParser, Argument, human_datetime, json_response
-from libs.utils import get_request_real_ip, generate_random_str
-from libs.push import send_mfa_code
+from libs.utils import get_request_real_ip
 from apps.account.models import User, Role, History
 from apps.setting.utils import AppSetting
 from apps.account.utils import verify_password
-from libs.ldap import LDAP
 from functools import partial
 import user_agents
 import ipaddress
@@ -37,7 +35,6 @@ class UserView(AdminView):
             Argument('password', help='请输入密码'),
             Argument('nickname', help='请输入姓名'),
             Argument('role_ids', type=list, default=[]),
-            Argument('wx_token', required=False),
         ).parse(request.body)
         if error is None:
             user = User.objects.filter(username=form.username, is_deleted=False).first()
@@ -66,6 +63,8 @@ class UserView(AdminView):
         if error is None:
             user = User.objects.get(pk=form.id)
             if form.password:
+                if user.type != 'default':
+                    return json_response(error='历史外部账户无法修改密码')
                 if not verify_password(form.password):
                     return json_response(error='请设置至少8位包含数字、小写和大写字母的新密码')
                 user.token_expired = 0
@@ -83,8 +82,8 @@ class UserView(AdminView):
         if error is None:
             user = User.objects.filter(pk=form.id).first()
             if user:
-                if user.type == 'ldap':
-                    return json_response(error='ldap账户无法删除，请使用禁用功能来禁止该账户访问系统')
+                if user.type != 'default':
+                    return json_response(error='历史外部账户无法删除，请使用禁用功能')
                 if user.id == request.user.id:
                     return json_response(error='无法删除当前登录账户')
                 user.is_active = True
@@ -148,7 +147,7 @@ class RoleView(AdminView):
 
 class SelfView(View):
     def get(self, request):
-        data = request.user.to_dict(selects=('nickname', 'wx_token'))
+        data = request.user.to_dict(selects=('nickname',))
         return json_response(data)
 
     def patch(self, request):
@@ -156,12 +155,11 @@ class SelfView(View):
             Argument('old_password', required=False),
             Argument('new_password', required=False),
             Argument('nickname', required=False, help='请输入昵称'),
-            Argument('wx_token', required=False),
         ).parse(request.body)
         if error is None:
             if form.old_password and form.new_password:
-                if request.user.type == 'ldap':
-                    return json_response(error='LDAP账户无法修改密码')
+                if request.user.type != 'default':
+                    return json_response(error='历史外部账户无法修改密码')
 
                 if not verify_password(form.new_password):
                     return json_response(error='请设置至少8位包含数字、小写和大写字母的新密码')
@@ -175,8 +173,6 @@ class SelfView(View):
                     return json_response(error='原密码错误，请重新输入')
             if form.nickname is not None:
                 request.user.nickname = form.nickname
-            if form.wx_token is not None:
-                request.user.wx_token = form.wx_token
             request.user.save()
         return json_response(error=error)
 
@@ -185,31 +181,19 @@ def login(request):
     form, error = JsonParser(
         Argument('username', help='请输入用户名'),
         Argument('password', help='请输入密码'),
-        Argument('captcha', required=False),
         # type 为空会写入 login_histories.type(NOT NULL) 导致登录接口异常，
         # 与 User.type 保持同一默认值。
         Argument('type', default='default', required=False)
     ).parse(request.body)
     if error is None:
+        if form.type != 'default':
+            return json_response(error='不支持的登录方式，请使用普通账户登录')
         handle_response = partial(handle_login_record, request, form.username, form.type)
-        user = User.objects.filter(username=form.username, type=form.type, is_deleted=False).first()
+        user = User.objects.filter(username=form.username, type='default', is_deleted=False).first()
         if user and not user.is_active:
             return handle_response(error="账户已被系统禁用")
-        if form.type == 'ldap':
-            config = AppSetting.get_default('ldap_service')
-            if not config:
-                return handle_response(error='请在系统设置中配置LDAP后再尝试通过该方式登录')
-            ldap = LDAP(**config)
-            is_success, message = ldap.verify_user(form.username, form.password)
-            if is_success:
-                if not user:
-                    user = User.objects.create(username=form.username, nickname=form.username, type=form.type)
-                return handle_user_info(handle_response, request, user, form.captcha)
-            elif message:
-                return handle_response(error=message)
-        else:
-            if user and user.verify_password(form.password):
-                return handle_user_info(handle_response, request, user, form.captcha)
+        if user and user.verify_password(form.password):
+            return handle_user_info(handle_response, request, user)
 
         value = cache.get_or_set(form.username, 0, 86400)
         if value >= 3:
@@ -237,28 +221,11 @@ def handle_login_record(request, username, login_type, error=None):
         return json_response(error=error)
 
 
-def handle_user_info(handle_response, request, user, captcha):
+def handle_user_info(handle_response, request, user):
     cache.delete(user.username)
-    key = f'{user.username}:code'
-    if captcha:
-        code = cache.get(key)
-        if not code:
-            return handle_response(error='验证码已失效，请重新获取')
-        if code != captcha:
-            ttl = cache.ttl(key)
-            cache.expire(key, ttl - 100)
-            return handle_response(error='验证码错误')
-        cache.delete(key)
-    else:
-        mfa = AppSetting.get_default('MFA', {'enable': False})
-        if mfa['enable']:
-            code = generate_random_str(6)
-            try:
-                send_mfa_code(user.wx_token, code)
-            except Exception as e:
-                return handle_response(error=f'已启用登录双重认证，但验证码发送失败：{e}')
-            cache.set(key, code, 300)
-            return json_response({'required_mfa': True})
+    # Do not silently downgrade installations that still require the retired factor.
+    if AppSetting.get_default('MFA', {}).get('enable'):
+        return handle_response(error='外部推送MFA已移除，请联系管理员确认安全策略后执行 set mfa disable，再使用本地账户登录。')
 
     handle_response()
     x_real_ip = get_request_real_ip(request.headers)

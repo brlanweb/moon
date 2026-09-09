@@ -155,6 +155,11 @@ export default observer(function () {
           dataSource={groupStore.records}
           render={item => item.name}/>
       </Form.Item>
+      {(info.notify_mode || []).some(mode => !modeOptions.some(option => option.value === mode)) && (
+        <Form.Item wrapperCol={{span: 14, offset: 6}}>
+          <Alert type="error" showIcon message={t('该任务包含已下线的报警方式，请重新选择报警方式后保存。')}/>
+        </Form.Item>
+      )}
       <Form.Item required name="notify_mode" initialValue={info.notify_mode} label={t('报警方式')}>
         <Checkbox.Group options={modeOptions}/>
       </Form.Item>

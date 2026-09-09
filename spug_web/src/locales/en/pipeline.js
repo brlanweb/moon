@@ -187,14 +187,7 @@ const dict = {
   '支持 markdown 语法，可使用 $SPUG_PIPE_NAME（流程名）、$SPUG_NODE_NAME（节点名）、$SPUG_STATE_TEXT（上游状态）、$SPUG_DATETIME（当前时间）以及参数化节点定义的变量。': 'Markdown is supported. Available variables: $SPUG_PIPE_NAME (pipeline name), $SPUG_NODE_NAME (node name), $SPUG_STATE_TEXT (upstream state), $SPUG_DATETIME (current time), plus any variable defined by a Parameters node.',
   '可使用 $SPUG_PIPE_NAME（流程名）、$SPUG_NODE_NAME（节点名）、$SPUG_STATE_TEXT（上游状态）、$SPUG_DATETIME（当前时间）以及参数化节点定义的变量。': 'Available variables: $SPUG_PIPE_NAME (pipeline name), $SPUG_NODE_NAME (node name), $SPUG_STATE_TEXT (upstream state), $SPUG_DATETIME (current time), plus any variable defined by a Parameters node.',
   '推送节点通常建议将执行条件设置为「总是执行」或「上游执行失败时」，以便在流程失败时也能收到通知。': 'Push nodes are usually best set to "Always" or "On upstream failure" so that you are still notified when the pipeline fails.',
-  '推送对象': 'Recipients',
-  '请选择推送对象': 'Please select the recipients',
-  '推送对象来自已绑定的推送助手账户。': 'Recipients come from the linked Push Assistant account.',
-  '未获取到推送对象': 'No recipients found',
-  '请先在 系统管理/系统设置/推送服务设置 中绑定推送助手账户，并在推送助手中添加联系人。': 'Link a Push Assistant account under System / Settings / Push Service first, then add contacts in Push Assistant.',
-  '已绑定推送助手账户，但没有取到联系人，请先在推送助手中添加联系人。': 'A Push Assistant account is linked but has no contacts. Add contacts in Push Assistant first.',
-  '微信公众号': 'WeChat Official Account',
-  '电话': 'Voice call',
+  '该节点模块已移除或不受支持，请重新选择节点模块': 'This node module is retired or unsupported. Select another module.',
 };
 
 export default dict;

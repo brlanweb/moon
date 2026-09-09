@@ -1,146 +1,52 @@
-[English](./README.md) | 简体中文 
+# Moon
 
-<h1 align="center">Spug</h1>
+简体中文 | [English](./README.md)
 
-<div align="center">
+![Moon](./spug_web/public/logo.png)
 
-Spug是面向中小型企业设计的轻量级无Agent的自动化运维平台，整合了主机管理、主机批量执行、主机在线终端、文件管理、应用发布部署、流水线、在线任务计划、配置中心、监控、报警等一系列功能。
+Moon 是面向已登记服务器的运维控制台，在 OpenSpug 基础上扩展了智能体运维、容器管理和资源监控，并统一使用 Moon 品牌与界面风格。
 
-</div>
+## 功能
 
+- 主机资产、分组、SSH 终端、文件管理及批量脚本执行。
+- 独立的容器项目、镜像、网络和存储管理页面。
+- 智能问答、服务器任务、危险命令审批、执行过程和停止生成。
+- 服务监控，以及 CPU、内存、磁盘、温度阈值告警。
+- 应用发布、流水线、计划任务、配置管理和数据库控制台。
+- 本地账户登录、角色权限管理、中英双语界面。
+- 站内通知，以及直连邮件、钉钉、飞书、企业微信通知。
 
-## 演示环境
+LDAP 和外部推送助手集成已下线。原依赖推送助手的 MFA 验证码通道不再可用；若旧 MFA 策略仍启用，需要管理员明确处理，不能静默绕过。
 
-演示地址：https://demo.spug.cc
+## 本地运行
 
-演示环境运行最新版本，数据每小时自动重置，可在页面右上角切换简体中文 / 英文界面。
+使用 Node.js 22、项目 Python 环境（已在 Python 3.10/3.12 验证）及 Docker Compose。内部包名、数据库标识和兼容配置保留，避免破坏现有安装。
 
-## 🔥推送助手
+```sh
+git clone https://github.com/brlanweb/moon.git
+cd moon
+cd spug_web
+npm ci
+npm run build
+cd ..
+docker compose -f docker-compose.local.yml up -d --build
+docker compose -f docker-compose.local.yml exec spug python3 /data/spug/spug_api/manage.py migrate
+```
 
-推送助手是一个集成了电话、短信、邮件、飞书、钉钉、微信、企业微信等多通道的消息推送平台，可以3分钟实现Zabbix、Prometheus、夜莺等监控系统的电话短信报警，点击体验：[https://push.spug.cc](https://push.spug.cc)
+访问 http://127.0.0.1:8000。本地 Compose 使用仅供开发的默认配置，不可直接作为公网生产部署；生产环境必须单独配置凭据、访问限制及备份。
 
+执行功能下线迁移前必须备份数据库。被移除的凭据内容无法仅靠反向结构迁移恢复。源码及前端构建产物已挂载至本地应用容器：Python 修改需重载应用进程，前端修改需重新执行 `npm run build`。
 
-## 特性
+## MCP 操作
 
-- **主机管理**: 支持分组管理、从云厂商或 Excel 批量导入、批量连通性验证
-- **批量执行**: 支持主机命令在线批量执行，支持参数化命令、执行模板与执行历史
-- **在线终端**: 主机支持浏览器在线终端登录
-- **文件管理**: 支持主机文件在线上传下载
-- **文件分发**: 支持将文件、目录从一台主机分发到多台主机
-- **构建部署**: 支持应用自定义构建部署，支持发布审核、灰度发布与回滚
-- **流水线**: 支持将参数化、构建、执行命令、数据传输、数据上传、钉钉/飞书/企业微信/推送助手通知等节点编排为流程，支持条件分支与实时控制台
-- **任务计划**: 支持在线配置Crontab、间隔等任务计划
-- **配置中心**: 支持KV、文本、json等格式的在线配置
-- **监控中心**: 支持站点、端口、进程、Ping、自定义脚本等监控
-- **报警中心**: 支持短信、邮件、钉钉、微信、企业微信等报警方式
-- **凭据管理**: 集中管理密码与密钥，供主机复用
-- **权限控制**: 细粒度的角色权限控制，支持 LDAP 登录与 MFA 认证
-- **中英双语**: 界面支持简体中文和英文，可在页面右上角切换
-- **优雅美观**: 基于 Ant Design 的UI界面
-- **开源免费**: 前后端代码完全开源
+通过官方 SDK 实现的 Streamable HTTP 端点为 `/mcp/`。在“系统管理 / MCP 操作”创建、重新生成或撤销令牌；专用操作日志也可从批量执行页进入。
 
+有效期固定为 1 天、7 天或 30 天，最长 30 天，调用不会续期；到期后必须重新生成，新令牌生成时旧令牌立即撤销。明文只展示一次，数据库仅保存不可逆摘要。普通用户仅管理自己的令牌，日志访问遵循当前主机权限。仅可操作已登记且当前有权访问的服务器；危险或动态展开的脚本会被拒绝。详见 [MCP 配置与安全边界](./docs/mcp.md)。
 
-## 环境
+## 源码与许可
 
-* Python 3.8+
-* Django 4.2
-* Node.js 14+
-* React 16.13
-* Redis 5.0+
+- Moon 仓库：https://github.com/brlanweb/moon
+- 上游项目：https://github.com/openspug/spug
+- 许可证：GNU Affero General Public License v3.0，详见仓库保留的许可证文件。
 
-## 安装文档
-
-- 官网地址：https://ops.spug.cc/docs/install-docker/
-- 使用文档：https://ops.spug.cc/docs/about-spug/
-- 更新日志：https://ops.spug.cc/docs/change-log/
-- 常见问题：https://ops.spug.cc/docs/faq/
-- 推送助手：https://push.spug.cc
-
-
-## 推荐项目
-[Yearning — MYSQL 开源SQL语句审核平台](https://github.com/cookieY/Yearning)
-
-
-## 预览
-
-### 工作台
-![工作台](docs/img/4.0/zh/workbench.jpg)
-
-### 数据统计
-![数据统计](docs/img/4.0/zh/dashboard.jpg)
-
-### 主机管理
-![主机管理](docs/img/4.0/zh/host.jpg)
-
-#### 主机在线终端
-![在线终端](docs/img/4.0/zh/web-terminal.jpg)
-
-#### 文件在线上传下载
-![文件管理](docs/img/4.0/zh/file-manager.jpg)
-
-#### 主机批量执行
-![批量执行](docs/img/4.0/zh/host-exec.jpg)
-![批量执行结果](docs/img/4.0/zh/host-exec2.jpg)
-
-### 流水线
-支持将构建、执行命令、数据传输、数据上传与消息推送等节点自由编排为流程。
-
-![流水线编排](docs/img/4.0/zh/pipeline.jpg)
-![内置节点模块](docs/img/4.0/zh/pipeline-modules.jpg)
-![流水线节点配置](docs/img/4.0/zh/pipeline-node.jpg)
-![流水线执行](docs/img/4.0/zh/pipeline-console.jpg)
-
-### 应用发布
-![发布配置](docs/img/4.0/zh/deploy.jpg)
-![发布申请](docs/img/4.0/zh/deploy-request.jpg)
-![发布过程](docs/img/4.0/zh/deploy-console.jpg)
-
-### 任务计划
-![任务计划](docs/img/4.0/zh/schedule.jpg)
-
-### 配置中心
-![配置中心](docs/img/4.0/zh/config.jpg)
-
-### 监控报警
-![监控中心](docs/img/4.0/zh/monitor.jpg)
-![报警中心](docs/img/4.0/zh/alarm.jpg)
-
-
-
-## 赞助
-<table>
-  <thead>
-    <tr>
-      <th align="center" style="width: 115px;">
-        <a href="https://www.ucloud.cn/site/active/kuaijie.html?invitation_code=C1xD0E5678FBA77">
-          <img src="https://cdn.spug.cc/img/ucloud.png" width="115px"><br>
-          <sub>UCloud</sub><br>
-          <sub>5 元/月云主机</sub>
-        </a>
-      </th>
-        <th align="center" style="width: 115px;">
-        <a href="https://www.aliyun.com/minisite/goods?userCode=8vdj3myc">
-          <img src="https://cdn.spug.cc/img/aliyun_quan.png" width="115px"><br>
-          <sub>阿里云通用券</sub><br>
-          <sub>300元限量免费领</sub>
-        </a>
-      </th>
-      <th align="center" style="width: 125px;">
-        <a href="http://www.magedu.com">
-          <img src="https://cdn.spug.cc/img/magedu-logo.jpeg" width="115px"><br>
-          <sub>马哥教育</sub><br>
-          <sub>IT人高薪职业学院</sub>
-        </a>
-      </th>
-    </tr>
-  </thead>
-</table>
-
-## 开发者群
-#### 关注Spug运维公众号加微信群、QQ群、获取最新产品动态
-<div >
-   <img src="https://cdn.spug.cc/img/spug-club.jpg" width = "300" height = "300" alt="spug-qq" align=center />
-<div>
-  
-## License & Copyright
-[AGPL-3.0](https://opensource.org/licenses/AGPL-3.0)
+保留 OpenSpug 及其他上游贡献者的版权声明。Moon 为独立维护的衍生项目，不代表 OpenSpug 官方发行版。Git 历史以及现有安装所需的技术标识均予以保留。

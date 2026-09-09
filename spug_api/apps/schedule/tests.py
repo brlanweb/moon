@@ -33,6 +33,25 @@ class TaskNotifyTests(SimpleTestCase):
             id=7, name='磁盘检查', type='巡检',
             rst_notify=json.dumps({'mode': mode, 'value': value}))
 
+    @patch('apps.schedule.utils.Notify.make_schedule_notify')
+    @patch('apps.schedule.utils.Notification.handle_request')
+    @patch('apps.schedule.utils.Mail')
+    def test_retired_or_unknown_mode_reports_invalid_configuration(self, mail, webhook, notify):
+        for mode in ('6', 'unknown'):
+            for value in ('https://example.test/hook', ''):
+                send_task_notify(self._task(mode, value), False, 'failed')
+        self.assertEqual(notify.call_count, 4)
+        mail.assert_not_called()
+        webhook.assert_not_called()
+
+    @patch('apps.schedule.utils.Notify.make_schedule_notify')
+    @patch('apps.schedule.utils.Notification.handle_request')
+    def test_disabled_or_unconfigured_notifications_remain_silent(self, webhook, notify):
+        for mode in ('0', None):
+            send_task_notify(self._task(mode, 'https://example.test/hook'), False, 'failed')
+        notify.assert_not_called()
+        webhook.assert_not_called()
+
     @patch('apps.schedule.utils.Mail')
     @patch('apps.schedule.utils.AppSetting.get_default', return_value={
         'server': 'smtp.example.com', 'port': 465,

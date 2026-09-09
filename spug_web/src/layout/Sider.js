@@ -58,7 +58,7 @@ export default function Sider(props) {
       <div className={styles.logo}>
         <MoonBrand compact={props.collapsed}/>
       </div>
-      <div className={styles.menus} style={{height: `${document.body.clientHeight - 64}px`}}>
+      <div className={styles.menuScroll}>
         <Menu
           theme="dark"
           mode="inline"

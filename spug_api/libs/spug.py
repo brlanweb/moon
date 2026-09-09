@@ -27,6 +27,8 @@ class Notification:
 
     @staticmethod
     def handle_request(url, data, mode=None):
+        if mode not in (None, 'dd', 'wx', 'fs'):
+            return Notify.make_system_notify('通知发送失败', '不支持的通知方式')
         try:
             res = requests.post(url, json=data, timeout=15)
         except Exception as e:
@@ -34,17 +36,18 @@ class Notification:
         if res.status_code != 200:
             return Notify.make_system_notify('通知发送失败', f'返回状态码：{res.status_code}, 请求URL：{res.url}')
 
-        if mode in ['dd', 'wx']:
-            res = res.json()
-            if res.get('errcode') == 0:
+        # Generic task webhooks have no vendor-specific JSON response contract.
+        if mode is None:
+            return
+        try:
+            payload = res.json()
+        except ValueError:
+            return Notify.make_system_notify('通知发送失败', '接口返回了无效的JSON数据')
+        if isinstance(payload, dict):
+            code_key = 'StatusCode' if mode == 'fs' else 'errcode'
+            if payload.get(code_key) == 0:
                 return
-        elif mode == 'fs':
-            res = res.json()
-            if res.get('StatusCode') == 0:
-                return
-        else:
-            raise NotImplementedError
-        Notify.make_system_notify('通知发送失败', f'返回数据：{res}')
+        Notify.make_system_notify('通知发送失败', f'返回数据：{payload}')
 
     def monitor_by_email(self, users):
         mail_service = AppSetting.get_default('mail_service', {})

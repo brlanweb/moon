@@ -60,16 +60,6 @@ export default observer(function () {
             <Link to="/system/role">{t('新建角色')}</Link>
           </Form.Item>
         </Form.Item>
-        <Form.Item
-          name="wx_token"
-          label={t('推送对象ID')}
-          extra={(
-            <span>
-              {t('用于接收登录MFA（两步验证）验证码，启用MFA时该项为必填。')}
-              <a target="_blank" rel="noopener noreferrer" href="https://push.spug.cc/guide/spug">{t('配置手册')}</a>
-            </span>)}>
-          <Input placeholder={t('请输入推送助手的推送对象ID')}/>
-        </Form.Item>
       </Form>
     </Modal>
   )

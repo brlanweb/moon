@@ -38,5 +38,6 @@ urlpatterns = [
     path('ai/', include('apps.ai.urls')),
     path('database/', include('apps.database.urls')),
     path('docker/', include('apps.docker.urls')),
+    path('mcp-admin/', include('apps.mcp_ops.urls')),
     path('apis/', include('apps.apis.urls')),
 ]

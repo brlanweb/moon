@@ -9,7 +9,6 @@ export const NODES = [
   {module: 'push_dd', name: t('钉钉推送')},
   {module: 'push_fs', name: t('飞书推送')},
   {module: 'push_wx', name: t('企业微信推送')},
-  {module: 'push_spug', name: t('推送助手')},
 ]
 
 export const DATAS = {

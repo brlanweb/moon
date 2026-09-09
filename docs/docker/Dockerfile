@@ -1,10 +1,10 @@
 # 基础镜像使用 bullseye（glibc 2.31）：不少用户的宿主机仍是 CentOS 7（内核 3.10）+ 旧版 Docker，
 # 更新的 glibc 会用到 clone3 等系统调用，被旧 docker 的默认 seccomp 拦截导致诡异失败。
-FROM python:3.9-slim-bullseye
+FROM python:3.10-slim-bullseye
 
 ENV TZ=Asia/Shanghai
 
-# nginx/redis/supervisor 为运行时组件；gcc 与各 -dev 包用于编译 mysqlclient、python-ldap；
+# nginx/redis/supervisor 为运行时组件；gcc 与各 -dev 包用于编译 mysqlclient 等依赖；
 # iputils-ping 供监控中心的 Ping 检测使用，rsync/sshpass/sshfs 供文件分发与主机管理使用。
 RUN apt-get update && apt-get install -y --no-install-recommends \
         nginx \
@@ -17,8 +17,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc \
         pkg-config \
         default-libmysqlclient-dev \
-        libldap2-dev \
-        libsasl2-dev \
         libssl-dev \
         iputils-ping \
         net-tools \
@@ -44,12 +42,12 @@ RUN pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ \
     "django_redis>=5.4.0,<6.0.0" \
     asgiref==3.7.2 \
     "requests>=2.31.0,<3.0.0" \
-    python-ldap==3.4.3 \
     GitPython==3.1.40 \
     openpyxl==3.1.2 \
     user_agents==2.2.0 \
     mysqlclient \
-    cryptography
+    cryptography \
+    mcp==2.2.0
 
 RUN sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && locale-gen en_US.UTF-8
 ENV LANG=en_US.UTF-8

@@ -41,6 +41,7 @@ ALLOWED_HOSTS = [x.strip() for x in os.environ.get(
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',  # Channels 4 的开发服务器 WebSocket 支持由 Daphne 提供。
     'apps.account',
     'apps.host',
     'apps.setting',
@@ -57,6 +58,7 @@ INSTALLED_APPS = [
     'apps.repository',
     'apps.deploy',
     'apps.ai',
+    'apps.mcp_ops',
     'apps.database',
     'apps.docker',
     'channels',
@@ -179,6 +181,7 @@ USE_TZ = False
 AUTHENTICATION_EXCLUDES = (
     '/account/login/',
     '/setting/basic/',
+    re.compile('/mcp(?:/.*)?$'),
     re.compile('/apis/.*'),
 )
 

@@ -79,7 +79,6 @@ class Contact(models.Model, ModelMixin):
     phone = models.CharField(max_length=20, null=True)
     email = models.CharField(max_length=255, null=True)
     ding = models.CharField(max_length=255, null=True)
-    wx_token = models.CharField(max_length=255, null=True)
     qy_wx = models.CharField(max_length=255, null=True)
     feishu = models.CharField(max_length=255, null=True)
     # 各渠道的加签密钥，JSON 存放，形如 {"ding": "...", "feishu": "..."}。

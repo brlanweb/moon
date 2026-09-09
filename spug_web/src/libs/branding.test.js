@@ -29,5 +29,4 @@ test('deployment translation changes the product name but preserves shell variab
   const output = t('应用最终在主机上的部署路径，为了数据安全请确保该目录不存在，Moon 将会自动创建并接管该目录，可使用全局变量，例如：/www/$SPUG_APP_KEY');
   expect(output).toContain('Moon will create and take over this directory');
   expect(output).toContain('/www/$SPUG_APP_KEY');
-  expect(t('例如：cn=admin,dc=spug,dc=cc')).toBe('e.g. cn=admin,dc=spug,dc=cc');
 });

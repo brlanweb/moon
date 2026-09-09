@@ -7,7 +7,6 @@ const dict = {
   // Menu / shared
   '首页': 'Home',
   '安全设置': 'Security Settings',
-  'LDAP设置': 'LDAP Settings',
   '密钥设置': 'SSH Key Settings',
   '报警服务设置': 'Alert Service Settings',
   '开放服务设置': 'Open Service Settings',
@@ -68,73 +67,16 @@ const dict = {
   '该自定义凭据用于访问平台的开放服务，例如：配置中心的配置获取API等，其他开放服务请查询官方文档。': 'This custom token is used to access the platform\'s open services, such as the configuration API of the Config Center. See the official documentation for other open services.',
   '请输入自定义凭证': 'Enter a custom token',
 
-  // LdapImport.js
   '登录名': 'Login Name',
-  '是否存在': 'Exists',
-  'Ldap用户导入': 'Import LDAP Users',
-  '导入选中': 'Import Selected',
-  '导入全部': 'Import All',
-  'LDAP用户列表': 'LDAP Users',
-  '搜索LDAP用户': 'Search LDAP users',
-
-  // LDAPSetting.js
-  '成功匹配{}个用户': 'Matched {} users',
-  'LDAP用户测试登录': 'Test LDAP User Login',
-  'LDAP登录名': 'LDAP Login Name',
-  'LDAP用户密码': 'LDAP User Password',
-  '登录成功': 'Signed in successfully',
-  'LDAP服务地址': 'LDAP Server Address',
-  '例如：ldap://127.0.0.1:389': 'e.g. ldap://127.0.0.1:389',
-  '绑定DN': 'Bind DN',
-  '例如：cn=admin,dc=spug,dc=cc': 'e.g. cn=admin,dc=spug,dc=cc',
-  'LDAP管理密码': 'LDAP admin password',
-  '用户OU': 'User OU',
-  '例如：ou=users,dc=spug,dc=cc': 'e.g. ou=users,dc=spug,dc=cc',
-  '用户过滤器': 'User Filter',
-  '例如：(cn或uid或sAMAccountName=%(user)s)': 'e.g. (cn=%(user)s), cn can also be uid or sAMAccountName',
-  '登录名映射': 'Login Name Mapping',
-  '登录名映射代表将LDAP用户的某个属性映射到Moon账户的登录名中，例如cn对应登录名': 'Which LDAP attribute is mapped to the Moon account login name, e.g. cn',
-  '例如：cn': 'e.g. cn',
-  '姓名映射': 'Name Mapping',
-  '姓名映射代表将LDAP用户的某个属性映射到Moon账户的姓名中，例如sn对应姓名': 'Which LDAP attribute is mapped to the Moon account display name, e.g. sn',
-  '例如：sn': 'e.g. sn',
   '测试连接': 'Test Connection',
-  '测试登录': 'Test Login',
-  '用户导入': 'Import Users',
 
   // SecuritySetting.js
-  '开启MFA认证需要先在推送服务设置中绑定推送助手账户': 'Please bind a Push Assistant account in Push Service Settings before enabling MFA',
-  '已开启登录MFA认证，请先在安全设置中关闭MFA后再解除绑定。': 'Login MFA is enabled, please disable it in Security Settings before unbinding.',
   '访问IP校验': 'Client IP Verification',
   // Followed inline by the "Why is the real IP not detected?" link, keep the trailing space.
   '建议开启，校验是否获取了真实的访问者IP，防止因为增加的反向代理层导致基于IP的安全策略失效，当校验失败时会在登录时弹窗提醒。如果你在内网部署且仅在内网使用可以关闭该特性。': 'Recommended. Verifies that the real client IP is obtained, so IP-based security policies are not defeated by an extra reverse proxy layer. A popup will warn you at login when the check fails. If Moon is deployed and used only on an internal network, you can turn this off. ',
   '为什么没有获取到真实IP？': 'Why is the real IP not detected?',
   '登录IP绑定': 'Login IP Binding',
   '强烈建议开启，当开启后会把登录凭证与IP进行绑定，当该登录凭证通过其他IP访问时将自动失效。如非必要，切勿关闭该特性！': 'Strongly recommended. When enabled, the login session is bound to the client IP and is invalidated automatically if used from another IP. Do not turn this off unless you really have to!',
-  '登录MFA（两步）认证': 'Login MFA (Two-Step Verification)',
-  '输入验证码，通过验证后开启。': 'Enter the verification code to turn it on.',
-  // Followed inline by the "Configuration guide" link, keep the trailing space.
-  '建议开启，登录时额外使用验证码进行身份验证。验证码通过推送助手下发，开启前需先在推送服务设置中绑定账户，并确保管理员账户配置了推送对象ID（账户管理/编辑），开启后未配置的账户将无法登录，': 'Recommended. Requires an extra verification code at login. Codes are delivered through the Push Assistant, so bind an account in Push Service Settings first and make sure at least the administrator account has a push target ID configured (Accounts / Edit); once enabled, accounts without one cannot sign in. ',
-  '验证通过后开启MFA（两步验证）。': 'MFA (two-step verification) will be enabled once the code is verified.',
-  '请输入验证码': 'Verification code',
-  '{} 秒后重新获取': 'Resend in {} seconds',
-  '获取验证码': 'Get Code',
-
-  // PushSetting.js
-  '推送服务设置': 'Push Service',
-  '推送助手账户绑定': 'Push Assistant account',
-  '请登录推送助手，至个人中心 / 个人设置查看用户ID，注意保密该ID请勿泄漏给第三方。': 'Sign in to Push Assistant and find your user ID under Profile / Settings. Keep this ID secret and never share it with third parties. ',
-  '配置手册': 'Setup guide',
-  '请输入要绑定的推送助手用户ID': 'Enter the Push Assistant user ID to link',
-  '绑定成功': 'Linked successfully',
-  '解绑成功': 'Unlinked successfully',
-  '确定要解除绑定？': 'Are you sure you want to unlink this account?',
-  '解绑': 'Unlink',
-  '充值': 'Top up',
-  '短信余额': 'SMS balance',
-  '语音余额': 'Voice balance',
-  '邮件余额': 'Email balance',
-  '微信公众号余额': 'WeChat Official Account balance',
 };
 
 export default dict;

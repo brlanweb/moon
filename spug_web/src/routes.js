@@ -47,6 +47,7 @@ import SystemRole from './pages/system/role';
 import SystemSetting from './pages/system/setting';
 import SystemLogin from './pages/system/login';
 import SystemCredential from './pages/system/credential';
+import SystemMcp from './pages/system/mcp';
 import WelcomeIndex from './pages/welcome/index';
 import WelcomeInfo from './pages/welcome/info';
 import PipelineIndex from './pages/pipeline';
@@ -122,9 +123,10 @@ const routes = [
     ]
   },
   {
-    icon: <SettingOutlined/>, title: t('系统管理'), auth: "system.account.view|system.role.view|system.setting.view", child: [
+    icon: <SettingOutlined/>, title: t('系统管理'), auth: "system.account.view|system.role.view|system.setting.view|system.login.view|system.credential.view|system.mcp.view", child: [
       {title: t('登录日志'), auth: 'system.login.view', path: '/system/login', component: SystemLogin},
       {title: t('凭据管理'), auth: 'system.credential.view', path: '/system/credential', component: SystemCredential},
+      {title: 'MCP 操作', auth: 'system.mcp.view', path: '/system/mcp', component: SystemMcp},
       {title: t('账户管理'), auth: 'system.account.view', path: '/system/account', component: SystemAccount},
       {title: t('角色管理'), auth: 'system.role.view', path: '/system/role', component: SystemRole},
       {title: t('系统设置'), auth: 'system.setting.view', path: '/system/setting', component: SystemSetting},

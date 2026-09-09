@@ -82,7 +82,7 @@ function ComTable() {
                 key: 'form',
                 label: (
                   <Space>
-                    <FormOutlined style={{fontSize: 16, marginRight: 4, color: '#6c7cff'}}/>
+                    <FormOutlined style={{fontSize: 16, marginRight: 4, color: '#28786f'}}/>
                     <span>{t('新建主机')}</span>
                   </Space>
                 )

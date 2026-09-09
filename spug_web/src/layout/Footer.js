@@ -14,8 +14,8 @@ export default function Footer() {
     <Layout.Footer style={{padding: 0}}>
       <div className={styles.footer}>
         <div className={styles.links}>
-          <a className={styles.item} href="https://github.com/openspug/spug" target="_blank" rel="noopener noreferrer">
-            <GithubOutlined style={{marginRight: 6}}/>{t('上游源码')}
+          <a className={styles.item} href="https://github.com/brlanweb/moon" target="_blank" rel="noopener noreferrer">
+            <GithubOutlined style={{marginRight: 6}}/>{t('项目源码')}
           </a>
           <a href="https://spug.cc/docs/about-spug/" target="_blank" rel="noopener noreferrer">{t('上游文档')}</a>
         </div>

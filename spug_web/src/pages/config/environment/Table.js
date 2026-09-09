@@ -61,11 +61,11 @@ function ComTable() {
         <div>
           <UpSquareOutlined
             onClick={() => handleSort(info, 'up')}
-            style={{cursor: 'pointer', color: '#6c7cff'}}/>
+            style={{cursor: 'pointer', color: '#28786f'}}/>
           <Divider type="vertical"/>
           <DownSquareOutlined
             onClick={() => handleSort(info, 'down')}
-            style={{cursor: 'pointer', color: '#6c7cff'}}/>
+            style={{cursor: 'pointer', color: '#28786f'}}/>
         </div>
       )}/>
       <Table.Column title={t('环境名称')} dataIndex="name"/>

@@ -53,7 +53,6 @@ const dict = {
   '基本设置': 'Basic Settings',
   '修改密码': 'Change Password',
   '保存成功，昵称将在重新登录或刷新页面后生效': 'Saved. The new name will take effect after you sign in again or refresh the page.',
-  '推送对象ID': 'Push Target ID',
   '配置手册': 'Configuration guide',
   '保存设置': 'Save Settings',
   '请输入原密码': 'Please enter your old password',

@@ -4,6 +4,9 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends docker.io \
     && rm -rf /var/lib/apt/lists/*
 
+# Retire the LDAP client inherited from the upstream service image.
+RUN pip3 uninstall -y python-ldap
+
 # 版本与 spug_api/requirements.txt 保持一致。
 # Django 4.2 起才支持 psycopg 3（PostgreSQL 需要），且要求 channels/daphne 4.x。
 RUN pip3 install --no-cache-dir \
@@ -18,4 +21,6 @@ RUN pip3 install --no-cache-dir \
     'psycopg[binary]>=3.1.0,<4.0.0' \
     'clickhouse-connect>=0.7.0,<1.0.0' \
     'redis>=5.0.0,<7.0.0' \
-    'pydantic-ai-slim[openai]==2.37.0'
+    'mcp==2.2.0'
+
+COPY docs/docker/mcp-supervisor.conf /etc/supervisor/conf.d/moon-mcp.conf
