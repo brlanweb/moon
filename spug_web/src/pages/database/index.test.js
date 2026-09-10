@@ -50,5 +50,8 @@ describe('database object tree layout', () => {
       'min-height': '0',
       overflow: 'auto',
     });
+    await expect(getDeclarations('.tree :global(.ant-spin-container)')).resolves.toMatchObject({
+      'min-height': '100%',
+    });
   });
 });
