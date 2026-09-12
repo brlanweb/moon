@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Modal, Space, Table, Tag, Tooltip, message } from 'antd';
 import { ClearOutlined, DeleteOutlined, ReloadOutlined } from '@ant-design/icons';
 import { hasPermission, http, t } from 'libs';
+import { clearDockerCache, readDockerCache, writeDockerCache } from './cache';
 import styles from './index.module.less';
 
 
@@ -22,13 +23,21 @@ export default function Resources({kind, hostId}) {
   const mountedRef = useRef(false);
   const canWrite = hasPermission('docker.project.do');
 
-  const load = useCallback(() => {
+  const load = useCallback((force = false) => {
     if (hostId === undefined || !mountedRef.current) return Promise.resolve();
+    if (!force) {
+      const cached = readDockerCache(hostId, kind);
+      if (cached && Array.isArray(cached.items)) {
+        setItems(cached.items);
+        return Promise.resolve(cached);
+      }
+    }
     const current = ++seq.current;
     setLoading(true);
     return http.post('/api/docker/resource/', {host_id: hostId, kind, action: 'list'}, {timeout: 70000})
       .then(data => {
         if (current !== seq.current) return;
+        writeDockerCache(hostId, kind, {items: data.items || []});
         setItems(data.items || []);
       })
       .finally(() => {
@@ -60,8 +69,9 @@ export default function Resources({kind, hostId}) {
           force: kind === 'images',
         }, {timeout: 320000})
           .then(() => {
+            clearDockerCache(hostId, kind, 'overview');
             message.success(t('删除成功'));
-            return load();
+            return load(true);
           })
           .finally(() => { if (mountedRef.current) setBusy(''); });
       },
@@ -84,8 +94,9 @@ export default function Resources({kind, hostId}) {
         return http.post('/api/docker/resource/', {host_id: hostId, kind, action: 'prune'},
           {timeout: 320000})
           .then(data => {
+            clearDockerCache(hostId, kind, 'overview');
             message.success(data.output ? data.output.split('\n').slice(-2).join(' ') : t('清理完成'));
-            return load();
+            return load(true);
           })
           .finally(() => { if (mountedRef.current) setBusy(''); });
       },
@@ -138,7 +149,7 @@ export default function Resources({kind, hostId}) {
       <div className={styles.configBar}>
         <span className={styles.resourceCount}>{t('共 {} 项', items.length)}</span>
         <Space>
-          <Button icon={<ReloadOutlined/>} loading={loading} disabled={hostId === undefined || Boolean(busy)} onClick={load}>{t('刷新')}</Button>
+          <Button icon={<ReloadOutlined/>} loading={loading} disabled={hostId === undefined || Boolean(busy)} onClick={() => load(true)}>{t('刷新')}</Button>
           <Button danger icon={<ClearOutlined/>} loading={busy === 'prune'}
                   disabled={!canWrite || hostId === undefined || loading || Boolean(busy)}
                   onClick={prune}>{t('清理未使用')}</Button>

@@ -210,6 +210,57 @@ def discover_projects(host=None, ssh=None, use_cache=False):
     return discover_all(host, ssh, use_cache)['projects']
 
 
+def build_overview_command():
+    return "docker version --format '{{json .Server}}' && docker info --format '{{json .}}'"
+
+
+def _format_memory(value):
+    try:
+        size = max(0, int(value or 0))
+    except (TypeError, ValueError):
+        size = 0
+    gib = size / (1024 ** 3)
+    return f'{gib:.1f} GiB'
+
+
+def parse_overview(output):
+    lines = [line.strip() for line in (output or '').splitlines() if line.strip()]
+    if len(lines) != 2:
+        raise DockerClientError('Docker 概览信息解析失败')
+    try:
+        version = json.loads(lines[0])
+        info = json.loads(lines[1])
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise DockerClientError('Docker 概览信息解析失败') from exc
+    if not isinstance(version, dict) or not version.get('Version') or not isinstance(info, dict):
+        raise DockerClientError('Docker 概览信息解析失败')
+    architecture = {'x86_64': 'amd64', 'aarch64': 'arm64'}.get(
+        info.get('Architecture'), info.get('Architecture') or '')
+    return {
+        'engine_version': version.get('Version') or '',
+        'api_version': version.get('ApiVersion') or '',
+        'min_api_version': version.get('MinAPIVersion') or '',
+        'containers_running': int(info.get('ContainersRunning') or 0),
+        'containers_paused': int(info.get('ContainersPaused') or 0),
+        'containers_stopped': int(info.get('ContainersStopped') or 0),
+        'containers': int(info.get('Containers') or 0),
+        'images': int(info.get('Images') or 0),
+        'cpus': int(info.get('NCPU') or 0),
+        'memory': _format_memory(info.get('MemTotal')),
+        'operating_system': info.get('OperatingSystem') or '',
+        'architecture': architecture,
+        'kernel_version': info.get('KernelVersion') or '',
+        'storage_driver': info.get('Driver') or '',
+    }
+
+
+def get_overview(host=None):
+    code, output = _run(host, build_overview_command(), 60)
+    if code:
+        raise DockerClientError(output or '无法读取 Docker 概览信息')
+    return parse_overview(output)
+
+
 def validate_project_ref(projects, project_name, config_file):
     for item in projects:
         files = item.get('config_files') or [item.get('config_file')]
@@ -359,16 +410,25 @@ def build_monitor_recover_command(project, service, replicas):
             f'--scale {shlex.quote(service)}={replicas} {shlex.quote(service)}')
 
 
-def execute_container(host, action, name, tail=200):
-    """对独立容器执行动作，执行前确认它确实是主机上的独立容器。
+def all_containers(payload):
+    managed = [container for project in payload.get('projects') or []
+               for container in project.get('containers') or []]
+    return managed + list(payload.get('standalone') or [])
 
-    校验目的不是防命令注入（名称已过 NAME_RE），而是避免对 compose 项目内
-    的容器绕过项目视图直接操作：compose 会在下次 up 时按自己的记录重建，
-    绕过去删只会让项目状态和 compose 记录对不上。
-    """
-    payload = discover_all(host, use_cache=True)
-    if name not in {item['name'] for item in payload['standalone']}:
+
+def container_names(payload):
+    return {item.get('name') for item in all_containers(payload) if item.get('name')}
+
+
+def execute_container(host, action, name, tail=200):
+    """按精确容器名执行受限动作；Compose 容器禁止直接删除。"""
+    payload = discover_all(host, use_cache=action != 'remove')
+    standalone_names = {item['name'] for item in payload['standalone']}
+    known_names = container_names(payload)
+    if name not in known_names:
         raise DockerClientError('容器已变化，请刷新后重试')
+    if action == 'remove' and name not in standalone_names:
+        raise DockerClientError('Compose 容器不能单独删除，请在 Compose 项目中管理')
     command = build_container_command(action, name, tail)
     code, output = _run(host, command, CONTAINER_TIMEOUTS[action])
     if code:

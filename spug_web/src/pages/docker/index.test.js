@@ -43,7 +43,9 @@ let root;
 let history;
 let streams;
 let confirm;
-const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
+const flush = async () => {
+  for (let index = 0; index < 6; index += 1) await Promise.resolve();
+};
 
 async function render(props = {}) {
   await act(async () => {
@@ -102,19 +104,102 @@ afterEach(() => {
 });
 
 test.each([
-  [undefined, '/docker', 'projects'], [undefined, '/docker/projects', 'projects'],
+  [undefined, '/docker', 'overview'], [undefined, '/docker/overview', 'overview'],
+  [undefined, '/docker/projects', 'compose'], [undefined, '/docker/containers', 'containers'],
   [undefined, '/docker/images/', 'images'], [undefined, '/docker/networks', 'networks'],
   [undefined, '/docker/volumes', 'volumes'], ['images', '/docker/projects', 'images'],
-  ['project', '', 'projects'], ['storage', '', 'volumes'], [undefined, '/docker/unknown', 'projects'],
+  ['project', '', 'compose'], ['projects', '', 'compose'], ['storage', '', 'volumes'],
+  [undefined, '/docker/unknown', 'overview'],
 ])('resolves section %s and path %s to %s', (section, path, expected) => {
   expect(resolveSection(section, path)).toBe(expected);
 });
 
+test('renders one Docker workspace with screenshot-style management tabs', async () => {
+  await render();
+
+  expect(root.querySelector('h1').textContent).toContain('Docker');
+  for (const label of ['概览', '容器', '镜像', '网络', '卷', 'Compose']) {
+    expect(root.textContent).toContain(label);
+  }
+  expect(root.textContent).toContain('请先选择服务器');
+  expect(http.post).not.toHaveBeenCalled();
+});
+
+test('can return to overview from a query-string tab', async () => {
+  history = createMemoryHistory({initialEntries: ['/docker?tab=images']});
+  await render();
+  const overviewTab = Array.from(root.querySelectorAll('.ant-tabs-tab'))
+    .find(item => item.textContent.includes('概览'));
+
+  await act(async () => { Simulate.click(overviewTab); await flush(); });
+  expect(history.location.pathname).toBe('/docker');
+  expect(history.location.search).toBe('');
+});
+
+test('overview loads Docker engine summary after selecting a host', async () => {
+  http.post.mockImplementation((url) => {
+    if (url === '/api/docker/overview/') return Promise.resolve({
+      engine_version: '24.0.1', api_version: '1.43', min_api_version: '1.12',
+      containers_running: 12, containers_paused: 0, containers_stopped: 1,
+      containers: 13, images: 8, cpus: 4, memory: '15.2 GiB',
+      operating_system: 'CentOS Linux 7 (Core)', architecture: 'amd64',
+      kernel_version: '3.10.0', storage_driver: 'overlay2',
+    });
+    return Promise.resolve({projects: [project], standalone});
+  });
+  await render({section: 'overview'});
+  await host();
+  expect(http.post).toHaveBeenCalledWith('/api/docker/overview/', {host_id: 1}, {timeout: 70000});
+  for (const value of ['12', '13', '8', '15.2 GiB', '24.0.1', 'CentOS Linux 7 (Core)']) {
+    expect(root.textContent).toContain(value);
+  }
+});
+
+test('overview reuses its first scan cache and refresh bypasses it', async () => {
+  http.post.mockImplementation((url) => url === '/api/docker/overview/' ? Promise.resolve({
+    engine_version: '24.0.1', containers_running: 1, containers_paused: 0,
+    containers_stopped: 0, containers: 1, images: 2, cpus: 4, memory: '8.0 GiB',
+  }) : Promise.resolve({items: []}));
+  await render({section: 'overview'});
+  await host();
+  await render({section: 'images'});
+  await render({section: 'overview'});
+
+  expect(http.post.mock.calls.filter(([url]) => url === '/api/docker/overview/')).toHaveLength(1);
+  await click('刷新');
+  expect(http.post.mock.calls.filter(([url]) => url === '/api/docker/overview/')).toHaveLength(2);
+});
+
+test('overview resource cards navigate to their management tabs', async () => {
+  history = createMemoryHistory({initialEntries: ['/docker']});
+  http.post.mockImplementation((url) => url === '/api/docker/overview/' ? Promise.resolve({
+    engine_version: '24.0.1', containers_running: 1, containers_paused: 0,
+    containers_stopped: 0, containers: 1, images: 2, cpus: 4, memory: '8.0 GiB',
+  }) : Promise.resolve({}));
+  await render();
+  await host();
+  const imageCard = Array.from(root.querySelectorAll('button'))
+    .find(item => item.textContent.includes('2镜像'));
+
+  expect(imageCard).toBeDefined();
+  await act(async () => { Simulate.click(imageCard); await flush(); });
+  expect(history.location.search).toBe('?tab=images');
+});
+
+test('overview keeps an error state and retry control after loading fails', async () => {
+  http.post.mockRejectedValue(new Error('timeout'));
+  await render({section: 'overview'});
+  await host();
+
+  expect(root.textContent).toContain('概览加载失败');
+  expect(Array.from(root.querySelectorAll('button')).some(item => item.textContent.includes('重试'))).toBe(true);
+});
+
 test.each([
-  ['images', '镜像管理'], ['networks', '网络管理'], ['volumes', '存储管理'],
+  ['images', '镜像'], ['networks', '网络'], ['volumes', '卷'],
 ])('%s opens its own resource first screen and preserves remove and prune', async (section, title) => {
   await render({section});
-  expect(root.querySelector('h2').textContent).toContain(title);
+  expect(root.querySelector('.ant-tabs-tab-active').textContent).toContain(title);
   expect(root.textContent).toContain('请先选择服务器');
   expect(root.textContent).not.toContain('独立容器');
   expect(root.textContent).not.toContain('返回项目');
@@ -135,13 +220,52 @@ test.each([
   expect(http.post).toHaveBeenCalledWith('/api/docker/resource/', {host_id: 1, kind: section, action: 'prune'}, {timeout: 320000});
 });
 
+test('resource tabs reuse the first scan cache until manual refresh', async () => {
+  await render({section: 'images'});
+  await host();
+  await render({section: 'networks'});
+  await render({section: 'images'});
+
+  const imageLists = () => http.post.mock.calls.filter(([url, body]) =>
+    url === '/api/docker/resource/' && body.kind === 'images' && body.action === 'list');
+  expect(imageLists()).toHaveLength(1);
+  await click('刷新');
+  expect(imageLists()).toHaveLength(2);
+});
+
+test('resource mutation invalidates resource and overview caches before reloading', async () => {
+  let imageListCalls = 0;
+  let overviewCalls = 0;
+  http.post.mockImplementation((url, body) => {
+    if (url === '/api/docker/overview/') {
+      overviewCalls += 1;
+      return Promise.resolve({engine_version: '24', containers: 1, images: 1, memory: '1 GiB'});
+    }
+    if (url === '/api/docker/resource/' && body.action === 'list') {
+      imageListCalls += 1;
+      if (imageListCalls === 2) return Promise.reject(new Error('refresh failed'));
+      return Promise.resolve({items: [{id: 'image-id', name: 'image-name'}]});
+    }
+    return Promise.resolve({});
+  });
+  await render({section: 'overview'});
+  await host();
+  await render({section: 'images'});
+  await act(async () => { Simulate.click(root.querySelector('tbody button')); });
+  await confirmAction().catch(() => {});
+  await render({section: 'overview'});
+  expect(overviewCalls).toBe(2);
+  await render({section: 'images'});
+  expect(imageListCalls).toBe(3);
+});
+
 test('path props and React Router location props route without extra integration wrappers', async () => {
   await render({path: '/docker/images'});
-  expect(root.querySelector('h2').textContent).toContain('镜像管理');
+  expect(root.querySelector('.ant-tabs-tab-active').textContent).toContain('镜像');
   await render({location: {pathname: '/docker/networks'}});
-  expect(root.querySelector('h2').textContent).toContain('网络管理');
+  expect(root.querySelector('.ant-tabs-tab-active').textContent).toContain('网络');
   await render({match: {path: '/docker/volumes'}});
-  expect(root.querySelector('h2').textContent).toContain('存储管理');
+  expect(root.querySelector('.ant-tabs-tab-active').textContent).toContain('卷');
 });
 
 test('switching resource section or host discards pending list results', async () => {
@@ -171,6 +295,43 @@ test('resource deletion permissions and built-in network protection remain enfor
   await render({section: 'networks'});
   expect(root.querySelectorAll('tbody button')[1].disabled).toBe(true);
   expect(Array.from(root.querySelectorAll('button')).find(item => item.textContent.includes('清理未使用')).disabled).toBe(true);
+});
+
+test('container tab combines Compose and standalone containers', async () => {
+  await render({section: 'containers'});
+  await host();
+
+  expect(root.textContent).toContain('web-app-1');
+  expect(root.textContent).toContain('independent');
+  expect(root.textContent).toContain('old-container');
+  expect(streams.some(stream => decodeURIComponent(stream.url).includes('names=web-app-1,independent'))).toBe(true);
+
+  const managedRow = Array.from(root.querySelectorAll('tbody tr'))
+    .find(item => item.textContent.includes('web-app-1'));
+  await act(async () => { Simulate.click(managedRow.querySelectorAll('button')[2]); await flush(); });
+  expect(http.post).toHaveBeenCalledWith('/api/docker/container/', {
+    host_id: 1, name: 'web-app-1', action: 'restart', tail: 200,
+  }, {timeout: 320000});
+});
+
+test('log search prints only case-insensitive keyword matches', async () => {
+  http.post.mockImplementation((url, body) => {
+    if (url === '/api/docker/discover/') return Promise.resolve({projects: [project], standalone});
+    if (url === '/api/docker/action/' && body.action === 'logs') {
+      return Promise.resolve({output: 'INFO ready\nERROR failed\nerror retry'});
+    }
+    return Promise.resolve({output: ''});
+  });
+  await render({section: 'projects'});
+  await host();
+  const row = Array.from(root.querySelectorAll('tbody tr'))
+    .find(item => item.textContent.includes('web-app-1'));
+  await act(async () => { Simulate.click(row.querySelectorAll('button')[0]); await flush(); });
+  const search = root.querySelector('input[placeholder="搜索日志"]');
+
+  expect(search).not.toBeNull();
+  await act(async () => { Simulate.change(search, {target: {value: 'error'}}); });
+  expect(root.querySelector('.ant-tabs-tabpane-active pre').textContent).toBe('ERROR failed\nerror retry');
 });
 
 test('project page retains compose actions, editor and standalone container operations', async () => {
@@ -209,7 +370,7 @@ test('project discovery completing after route change cannot load compose or rev
   await act(async () => { finish({projects: [project], standalone}); await flush(); });
   expect(http.get.mock.calls.some(([url]) => url === '/api/docker/config/')).toBe(false);
   expect(streams).toHaveLength(0);
-  expect(root.querySelector('h2').textContent).toContain('存储管理');
+  expect(root.querySelector('.ant-tabs-tab-active').textContent).toContain('卷');
 });
 
 test('standalone containers remain reachable without any compose projects', async () => {
@@ -252,6 +413,33 @@ test('project creation remains available and deletion still calls compose remova
   expect(http.post).toHaveBeenCalledWith('/api/docker/remove/', {
     host_id: 1, project: 'web', config_file: '/opt/web/compose.yaml', delete_files: false,
   }, {timeout: 620000});
+});
+
+test('unsaved compose changes require confirmation before switching hosts', async () => {
+  await render({section: 'compose'});
+  await host();
+  await act(async () => {
+    Simulate.change(root.querySelector('textarea'), {target: {value: 'services: {changed: {}}'}});
+  });
+
+  await host(2);
+  expect(confirm).toHaveBeenCalled();
+  expect(http.post.mock.calls.some(([url, body]) => url === '/api/docker/discover/' && body.host_id === 2)).toBe(false);
+  await confirmAction();
+  expect(http.post.mock.calls.some(([url, body]) => url === '/api/docker/discover/' && body.host_id === 2)).toBe(true);
+});
+
+test('leaving Compose clears the parent dirty state', async () => {
+  await render({section: 'compose'});
+  await host();
+  await act(async () => {
+    Simulate.change(root.querySelector('textarea'), {target: {value: 'services: {changed: {}}'}});
+  });
+  await render({section: 'images'});
+  confirm.mockClear();
+
+  await host(2);
+  expect(confirm).not.toHaveBeenCalled();
 });
 
 test('unsaved compose changes block route navigation and can still be saved', async () => {

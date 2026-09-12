@@ -1,38 +1,52 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Alert, Button, Checkbox, Empty, Modal, Select, Space, Spin, Table, Tabs, Tag, Tooltip, message,
+  Alert, Button, Checkbox, Empty, Input, Modal, Select, Space, Spin, Table, Tabs, Tag, Tooltip, message,
 } from 'antd';
 import {
-  CaretRightOutlined, ClearOutlined, DeleteOutlined, DockerOutlined, FileTextOutlined,
-  PauseOutlined, PlayCircleOutlined, PlusOutlined, RedoOutlined, ReloadOutlined,
-  SaveOutlined, StopOutlined,
+  AppstoreOutlined, CaretRightOutlined, ClearOutlined, CloudServerOutlined, DatabaseOutlined,
+  DeleteOutlined, DockerOutlined, FileTextOutlined, HddOutlined, PauseOutlined, PlayCircleOutlined,
+  PlusOutlined, RedoOutlined, ReloadOutlined, SaveOutlined, SearchOutlined, StopOutlined,
 } from '@ant-design/icons';
 import { ACEditor } from 'components';
 import { hasPermission, http, t, X_TOKEN } from 'libs';
-import { Prompt } from 'react-router-dom';
+import { Prompt, useHistory, useLocation } from 'react-router-dom';
 import CreateProject from './CreateProject';
 import Resources from './Resources';
+import { clearDockerCache, readDockerCache, writeDockerCache } from './cache';
 import styles from './index.module.less';
 
 
 const SECTION_LABELS = {
-  projects: '项目管理',
-  images: '镜像管理',
-  networks: '网络管理',
-  volumes: '存储管理',
+  overview: '概览',
+  containers: '容器',
+  images: '镜像',
+  networks: '网络',
+  volumes: '卷',
+  compose: 'Compose',
 };
 
-export function resolveSection(section, pathname = '') {
-  const value = section || pathname.replace(/\/+$/, '').split('/').pop();
-  const aliases = {project: 'projects', storage: 'volumes'};
+const SECTION_ICONS = {
+  overview: <AppstoreOutlined/>, containers: <DockerOutlined/>, images: <DatabaseOutlined/>,
+  networks: <CloudServerOutlined/>, volumes: <HddOutlined/>, compose: <FileTextOutlined/>,
+};
+
+export function resolveSection(section, pathname = '', search = '') {
+  const querySection = new URLSearchParams(search).get('tab');
+  const value = section || querySection || pathname.replace(/\/+$/, '').split('/').pop();
+  const aliases = {project: 'compose', projects: 'compose', storage: 'volumes', docker: 'overview'};
   const key = aliases[value] || value;
-  return Object.prototype.hasOwnProperty.call(SECTION_LABELS, key) ? key : 'projects';
+  return Object.prototype.hasOwnProperty.call(SECTION_LABELS, key) ? key : 'overview';
 }
 
 export default function DockerConsole({section, location, path, match} = {}) {
-  const currentSection = resolveSection(section, location?.pathname || path || match?.path);
+  const routerLocation = useLocation();
+  const routerHistory = useHistory();
+  const currentSection = resolveSection(
+    section, location?.pathname || path || match?.path || routerLocation.pathname,
+    location?.search || routerLocation.search);
   const [hosts, setHosts] = useState([]);
   const [hostId, setHostId] = useState();
+  const [composeDirty, setComposeDirty] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -40,26 +54,146 @@ export default function DockerConsole({section, location, path, match} = {}) {
     return () => { cancelled = true; };
   }, []);
 
-  if (currentSection === 'projects') {
-    return <ProjectConsole key={hostId === undefined ? 'none' : hostId}
-                           hosts={hosts} hostId={hostId} onHostChange={setHostId}/>;
+  function changeHost(value) {
+    const apply = () => { setComposeDirty(false); setHostId(value); };
+    if (composeDirty) {
+      Modal.confirm({
+        title: t('存在未保存修改'),
+        content: t('切换服务器会丢弃当前修改，确认继续？'),
+        onOk: apply,
+      });
+      return;
+    }
+    apply();
+  }
+
+  function changeSection(key) {
+    if (section) return;
+    const target = key === 'overview' ? '/docker' : `/docker?tab=${key}`;
+    const current = `${routerLocation.pathname}${routerLocation.search}`;
+    if (current !== target) routerHistory.push(target);
+  }
+
+  let content;
+  if (currentSection === 'overview') {
+    content = <OverviewPanel key={hostId === undefined ? 'none' : hostId}
+                             hostId={hostId} onNavigate={changeSection}/>;
+  } else if (currentSection === 'images' || currentSection === 'networks' || currentSection === 'volumes') {
+    content = hostId === undefined ? <Empty description={t('请先选择服务器')}/> : (
+      <Resources key={`${currentSection}:${hostId}`} kind={currentSection} hostId={hostId}/>
+    );
+  } else {
+    content = <ProjectConsole key={`${currentSection}:${hostId === undefined ? 'none' : hostId}`}
+                              hosts={hosts} hostId={hostId} onDirtyChange={setComposeDirty}
+                              initialView={currentSection === 'containers' ? 'standalone' : 'project'}/>;
   }
 
   return (
-    <main className={`${styles.page} ${styles.resourcePage}`}>
-      <header className={styles.header}>
-        <h2><DockerOutlined/> {t(SECTION_LABELS[currentSection])}</h2>
-        <Select className={styles.resourceHostSelect} value={hostId}
-                aria-label={t('选择服务器')} placeholder={t('选择服务器')} onChange={setHostId}>
-          {hosts.map(host => <Select.Option key={host.id} value={host.id}>{host.name} ({host.hostname})</Select.Option>)}
-        </Select>
+    <main className={styles.workspace}>
+      <header className={styles.workspaceHeader}>
+        <div className={styles.brand}>
+          <DockerOutlined/>
+          <div><h1>Docker</h1><span>{hostId === undefined ? t('选择服务器开始管理') : t('SSH · 读写')}</span></div>
+        </div>
+        <div className={styles.hostPicker}>
+          <Select value={hostId} aria-label={t('选择服务器')} placeholder={t('选择服务器')}
+                  onChange={changeHost}>
+            {hosts.map(host => <Select.Option key={host.id} value={host.id}>{host.name} ({host.hostname})</Select.Option>)}
+          </Select>
+        </div>
       </header>
-      <section className={styles.resourcePanel}>
-        {hostId === undefined ? <Empty description={t('请先选择服务器')}/> : (
-          <Resources key={`${currentSection}:${hostId}`} kind={currentSection} hostId={hostId}/>
-        )}
+      <Tabs className={styles.workspaceTabs} activeKey={currentSection} onChange={changeSection}
+            items={Object.keys(SECTION_LABELS).map(key => ({
+              key, label: <span>{SECTION_ICONS[key]} {t(SECTION_LABELS[key])}</span>,
+            }))}/>
+      <section className={`${styles.workspaceBody} ${currentSection === 'compose' || currentSection === 'containers' ? styles.workspaceBodyFlush : ''}`}>
+        {content}
       </section>
     </main>
+  );
+}
+
+function OverviewPanel({hostId, onNavigate}) {
+  const [data, setData] = useState();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
+
+  function load(force = false) {
+    if (hostId === undefined) return Promise.resolve();
+    if (!force) {
+      const cached = readDockerCache(hostId, 'overview');
+      if (cached) {
+        setData(cached);
+        return Promise.resolve(cached);
+      }
+    }
+    setLoading(true);
+    setError(false);
+    return http.post('/api/docker/overview/', {host_id: hostId}, {timeout: 70000})
+      .then(result => {
+        writeDockerCache(hostId, 'overview', result);
+        setData(result);
+        return result;
+      })
+      .catch(() => setError(true))
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(() => { load(); }, [hostId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (hostId === undefined) return <Empty description={t('请先选择服务器')}/>;
+  if (error) return (
+    <Empty description={t('概览加载失败')}>
+      <Button icon={<ReloadOutlined/>} loading={loading} onClick={() => load(true)}>{t('重试')}</Button>
+    </Empty>
+  );
+  if (!data) return <div className={styles.overviewLoading}><Spin spinning={loading}/></div>;
+
+  const metrics = [
+    ['containers_running', '运行中容器', <DockerOutlined/>, 'containers'],
+    ['containers_paused', '暂停容器', <PauseOutlined/>, 'containers'],
+    ['containers_stopped', '停止容器', <StopOutlined/>, 'containers'],
+    ['containers', '容器总数', <AppstoreOutlined/>, 'containers'],
+    ['images', '镜像', <DatabaseOutlined/>, 'images'],
+    ['memory', '内存', <HddOutlined/>],
+  ];
+  const engine = [
+    ['Engine 版本', data.engine_version], ['最高 API 版本', data.api_version],
+    ['最低 API 版本', data.min_api_version], ['连接方式', 'SSH'],
+    ['操作系统', data.operating_system], ['架构', data.architecture],
+    ['内核', data.kernel_version], ['存储驱动', data.storage_driver],
+  ];
+  const capabilities = [
+    ['CPU', data.cpus], ['内存', data.memory], ['容器管理', '可用'],
+    ['实时 Stats', '可用'], ['实时日志', '可用'], ['Compose', '可用'],
+  ];
+
+  return (
+    <div className={styles.overview}>
+      <div className={styles.overviewActions}>
+        <Tag>docker {data.engine_version}</Tag>
+        <Button icon={<ReloadOutlined/>} loading={loading} onClick={() => load(true)}>{t('刷新')}</Button>
+      </div>
+      <div className={styles.metricGrid}>
+        {metrics.map(([key, label, icon, target]) => {
+          const content = <><span>{icon}</span><strong>{data[key]}</strong><small>{t(label)}</small></>;
+          return target ? (
+            <button type="button" className={`${styles.metric} ${styles.metricLink}`} key={key}
+                    onClick={() => onNavigate(target)}>{content}</button>
+          ) : <div className={styles.metric} key={key}>{content}</div>;
+        })}
+      </div>
+      <div className={styles.infoGrid}>
+        <section className={styles.infoPanel}>
+          <h2><DatabaseOutlined/> Engine</h2>
+          <dl>{engine.map(([label, value]) => <React.Fragment key={label}><dt>{t(label)}</dt><dd>{value || '-'}</dd></React.Fragment>)}</dl>
+        </section>
+        <section className={styles.infoPanel}>
+          <h2><AppstoreOutlined/> {t('资源与能力')}</h2>
+          <dl>{capabilities.map(([label, value]) => <React.Fragment key={label}><dt>{t(label)}</dt><dd>{value}</dd></React.Fragment>)}</dl>
+        </section>
+      </div>
+    </div>
   );
 }
 
@@ -94,7 +228,7 @@ function writeProjectCache(hostId, data) {
   }
 }
 
-function ProjectConsole({hosts, hostId, onHostChange}) {
+function ProjectConsole({hosts, hostId, initialView = 'project', onDirtyChange}) {
   const [projects, setProjects] = useState([]);
   // 非 compose 管理的容器（docker run 起的，或 compose 标签残缺）
   const [standalone, setStandalone] = useState([]);
@@ -106,6 +240,7 @@ function ProjectConsole({hosts, hostId, onHostChange}) {
   const [savedContent, setSavedContent] = useState('');
   const [selectedFile, setSelectedFile] = useState();
   const [logLines, setLogLines] = useState([]);
+  const [logKeyword, setLogKeyword] = useState('');
   const [logService, setLogService] = useState();
   const [tail, setTail] = useState(200);
   // 实时跟随开关，开启后用 SSE 持续接收 docker logs -f 的输出
@@ -116,8 +251,8 @@ function ProjectConsole({hosts, hostId, onHostChange}) {
   // 列表来自缓存、后台正在拉取真实数据时为 true，仅用于提示，不阻塞交互。
   const [stale, setStale] = useState(false);
   const [stats, setStats] = useState({});
-  // 项目管理内仅切换 Compose 项目与独立容器。
-  const [view, setView] = useState('project');
+  // Compose 页显示项目，容器页直接进入独立容器视图。
+  const [view, setView] = useState(initialView);
   const mountedRef = useRef(false);
   const discoverSeq = useRef(0);
   const configSeq = useRef(0);
@@ -134,6 +269,10 @@ function ProjectConsole({hosts, hostId, onHostChange}) {
   const [editorHeight, setEditorHeight] = useState(360);
   const [logWrap, setLogWrap] = useState(true);
   const active = projects.find(item => projectKey(item) === activeKey);
+  const isContainerWorkspace = initialView === 'standalone';
+  const managedContainers = projects.reduce((result, project) => result.concat(
+    project.containers.map(container => ({...container, managed: true}))), []);
+  const displayedContainers = isContainerWorkspace ? managedContainers.concat(standalone) : standalone;
   const writeBusy = Boolean(running && !running.startsWith('logs:'));
 
   useEffect(() => {
@@ -148,6 +287,14 @@ function ProjectConsole({hosts, hostId, onHostChange}) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (onDirtyChange) onDirtyChange(configContent !== savedContent);
+  }, [configContent, savedContent, onDirtyChange]);
+
+  useEffect(() => () => {
+    if (onDirtyChange) onDirtyChange(false);
+  }, [onDirtyChange]);
 
   useEffect(() => { activeKeyRef.current = activeKey; }, [activeKey]);
 
@@ -247,7 +394,7 @@ function ProjectConsole({hosts, hostId, onHostChange}) {
     statsTargets = runningNames(active.containers);
     statsQuery = {host_id: hostId, project: active.name, config_file: active.config_file};
   } else if (view === 'standalone') {
-    statsTargets = runningNames(standalone);
+    statsTargets = runningNames(displayedContainers);
     statsQuery = {host_id: hostId, names: statsTargets.join(',')};
   }
   const statsUrl = statsTargets.length
@@ -372,6 +519,10 @@ function ProjectConsole({hosts, hostId, onHostChange}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [logStreamUrl]);
 
+  function invalidateOverview() {
+    clearDockerCache(hostId, 'overview');
+  }
+
   function target(project = active, file = selectedFile) {
     return {
       host_id: hostId,
@@ -453,6 +604,7 @@ function ProjectConsole({hosts, hostId, onHostChange}) {
           ...target(), delete_files: deleteFiles,
         }, {timeout: 620000})
           .then(() => {
+            invalidateOverview();
             message.success(t('项目已删除'));
             if (!mountedRef.current) return;
             setActiveKey(undefined);
@@ -478,6 +630,7 @@ function ProjectConsole({hosts, hostId, onHostChange}) {
             if (seq !== logsSeq.current || requestKey !== activeKey) return;
             setLogLines((data.output || '').split('\n'));
           } else {
+            invalidateOverview();
             message.success(t('操作成功'));
             return discover(hostId, activeKey, true);
           }
@@ -510,6 +663,7 @@ function ProjectConsole({hosts, hostId, onHostChange}) {
             setLogLines((data.output || '').split('\n'));
             return null;
           }
+          invalidateOverview();
           message.success(t('操作成功'));
           return discover(hostId, activeKey, true);
         })
@@ -546,6 +700,35 @@ function ProjectConsole({hosts, hostId, onHostChange}) {
     execute();
   }
 
+  function managedContainerAction(actionName, item) {
+    const seq = ++logsSeq.current;
+    setRunning(`${actionName}:${item.name}`);
+    return http.post('/api/docker/container/', {
+      host_id: hostId, name: item.name, action: actionName, tail,
+    }, {timeout: 320000})
+      .then(data => {
+        if (actionName === 'logs') {
+          if (seq === logsSeq.current) setLogLines((data.output || '').split('\n'));
+          return null;
+        }
+        invalidateOverview();
+        message.success(t('操作成功'));
+        return discover(hostId, activeKey, true);
+      })
+      .finally(() => { if (mountedRef.current) setRunning(''); });
+  }
+
+  function unifiedContainerAction(actionName, item) {
+    if (item.managed) return managedContainerAction(actionName, item);
+    return containerAction(actionName, item.name);
+  }
+
+  function selectLogTarget(value) {
+    logsSeq.current += 1;
+    setLogService(value);
+    setLogLines([]);
+  }
+
   function selectProject(item) {
     if (configContent !== savedContent) {
       Modal.confirm({
@@ -557,23 +740,6 @@ function ProjectConsole({hosts, hostId, onHostChange}) {
     }
     setView('project');
     setActiveKey(projectKey(item));
-  }
-
-  function changeHost(value) {
-    const apply = () => {
-      configCache.current = {};
-      setView('project');
-      onHostChange(value);
-    };
-    if (configContent !== savedContent) {
-      Modal.confirm({
-        title: t('存在未保存修改'),
-        content: t('切换服务器会丢弃当前修改，确认继续？'),
-        onOk: apply,
-      });
-      return;
-    }
-    apply();
   }
 
   function refreshProjects() {
@@ -632,7 +798,7 @@ function ProjectConsole({hosts, hostId, onHostChange}) {
       <Space size={4}>
         <Tooltip title={t('查看日志')}><Button type="text" icon={<FileTextOutlined/>} onClick={() => {
           setActiveTab('logs');
-          setLogService(item.service);
+          selectLogTarget(item.service);
           // 跟随中只需切换目标，日志流会自动重连；否则拉一次静态日志
           if (!follow) action('logs', item.service);
         }}/></Tooltip>
@@ -646,6 +812,7 @@ function ProjectConsole({hosts, hostId, onHostChange}) {
     {title: t('容器'), dataIndex: 'name', ellipsis: true, render: (value, item) => (
       <Space size={6}>
         <strong>{value}</strong>
+        {item.managed && <Tag color="blue">Compose</Tag>}
         {item.partial_labels && (
           <Tooltip title={t('该容器带有残缺的 Compose 标签（project={}），缺少配置文件路径，无法用 Compose 管理。建议重建时去掉这些标签。', item.project || '-')}>
             <Tag color="orange">{t('标签残缺')}</Tag>
@@ -661,25 +828,27 @@ function ProjectConsole({hosts, hostId, onHostChange}) {
       <Space size={4}>
         <Tooltip title={t('查看日志')}><Button type="text" icon={<FileTextOutlined/>}
           onClick={() => {
-            setLogService(item.name);
-            if (!follow) containerAction('logs', item.name);
+            selectLogTarget(item.name);
+            if (!follow) unifiedContainerAction('logs', item);
           }}/></Tooltip>
         {item.state === 'running' ? (
           <Tooltip title={t('停止')}><Button type="text" danger icon={<StopOutlined/>}
-            disabled={writeBusy || !canOperate} onClick={() => containerAction('stop', item.name)}/></Tooltip>
+            disabled={writeBusy || !canOperate} onClick={() => unifiedContainerAction('stop', item)}/></Tooltip>
         ) : (
           <Tooltip title={t('启动')}><Button type="text" icon={<CaretRightOutlined/>}
-            disabled={writeBusy || !canOperate} onClick={() => containerAction('start', item.name)}/></Tooltip>
+            disabled={writeBusy || !canOperate} onClick={() => unifiedContainerAction('start', item)}/></Tooltip>
         )}
         <Tooltip title={t('重启')}><Button type="text" icon={<RedoOutlined/>}
           disabled={writeBusy || !canOperate || item.state !== 'running'}
-          onClick={() => containerAction('restart', item.name)}/></Tooltip>
-        <Tooltip title={canRemove ? t('删除容器') : t('无删除权限')}>
-          <Button type="text" danger icon={<DeleteOutlined/>}
-            loading={running === `remove:${item.name}`}
-            disabled={writeBusy || !canRemove}
-            onClick={() => containerAction('remove', item.name)}/>
-        </Tooltip>
+          onClick={() => unifiedContainerAction('restart', item)}/></Tooltip>
+        {!item.managed && (
+          <Tooltip title={canRemove ? t('删除容器') : t('无删除权限')}>
+            <Button type="text" danger icon={<DeleteOutlined/>}
+              loading={running === `remove:${item.name}`}
+              disabled={writeBusy || !canRemove}
+              onClick={() => containerAction('remove', item.name)}/>
+          </Tooltip>
+        )}
       </Space>
     )},
   ];
@@ -716,6 +885,7 @@ function ProjectConsole({hosts, hostId, onHostChange}) {
         } finally {
           setRunning('');
         }
+        invalidateOverview();
         if (failed.length) message.warning(t('{} 个容器删除失败', failed.length));
         else message.success(t('清理完成'));
         return discover(hostId, activeKey, true);
@@ -726,13 +896,17 @@ function ProjectConsole({hosts, hostId, onHostChange}) {
   // 日志面板在两种视图下复用：项目视图按服务过滤，独立容器视图按容器名
   const isStandalone = view === 'standalone';
   const logOptions = isStandalone
-    ? standalone.map(item => ({value: item.name, label: item.name}))
+    ? displayedContainers.map(item => ({value: item.name, label: item.name}))
     : (active?.containers || []).map(item => ({value: item.service, label: item.service}));
 
   function reloadLogs() {
     if (!logService) return;
-    if (isStandalone) containerAction('logs', logService);
-    else action('logs', logService);
+    if (isStandalone) {
+      const item = displayedContainers.find(value => value.name === logService);
+      if (item) unifiedContainerAction('logs', item);
+    } else {
+      action('logs', logService);
+    }
   }
 
   // 独立容器必须先选中一个才能跟随，项目视图不选则跟随全部服务
@@ -740,16 +914,25 @@ function ProjectConsole({hosts, hostId, onHostChange}) {
   const logPlaceholder = follow
     ? t('正在等待日志输出…')
     : (isStandalone ? t('选择容器后加载或开启实时跟随') : t('选择服务并加载日志'));
+  const normalizedKeyword = logKeyword.trim().toLowerCase();
+  const visibleLogLines = normalizedKeyword
+    ? logLines.filter(line => line.toLowerCase().includes(normalizedKeyword))
+    : logLines;
+  const visibleLogText = visibleLogLines.length
+    ? visibleLogLines.join('\n')
+    : (normalizedKeyword && logLines.length ? t('没有匹配的日志') : logPlaceholder);
 
   const logPane = (
     <div className={styles.logs}>
       <div className={styles.logToolbar}>
         <Select allowClear value={logService} style={{width: 200}}
                 placeholder={isStandalone ? t('选择容器') : t('全部服务')}
-                onChange={value => { setLogService(value); setLogLines([]); }}
+                onChange={selectLogTarget}
                 options={logOptions}/>
         <Select value={tail} style={{width: 130}} onChange={setTail}
                 options={[100, 200, 500, 1000, 2000].map(value => ({value, label: `${value} lines`}))}/>
+        <Input allowClear value={logKeyword} prefix={<SearchOutlined/>} className={styles.logSearch}
+               placeholder={t('搜索日志')} onChange={event => setLogKeyword(event.target.value)}/>
         <Button icon={<ReloadOutlined/>} loading={running.startsWith('logs:')}
                 disabled={follow || (isStandalone && !logService)}
                 onClick={isStandalone ? reloadLogs : () => action('logs', logService)}>
@@ -769,14 +952,16 @@ function ProjectConsole({hosts, hostId, onHostChange}) {
         )}
         <Checkbox checked={logWrap} onChange={e => setLogWrap(e.target.checked)}
                   className={styles.logWrap}>{t('自动换行')}</Checkbox>
-        <span className={styles.logCount}>{t('{} 行', logLines.length)}</span>
+        <span className={styles.logCount}>
+          {normalizedKeyword ? t('{} / {} 行', visibleLogLines.length, logLines.length) : t('{} 行', logLines.length)}
+        </span>
       </div>
       <pre ref={logBoxRef} className={logWrap ? styles.logWrapOn : styles.logWrapOff}
            onScroll={event => {
              const box = event.target;
              stickBottomRef.current = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
            }}>
-        {logLines.length ? logLines.join('\n') : logPlaceholder}
+        {visibleLogText}
       </pre>
     </div>
   );
@@ -812,15 +997,11 @@ function ProjectConsole({hosts, hostId, onHostChange}) {
       <Prompt when={configContent !== savedContent}
               message={t('离开项目管理会丢弃未保存的配置修改，确认继续？')}/>
       <aside className={styles.sidebar}>
-        <div className={styles.sidebarHeader}><div><DockerOutlined/> {t('项目管理')}</div></div>
-        <Select className={styles.hostSelect} value={hostId} placeholder={t('选择服务器')}
-                aria-label={t('选择服务器')} onChange={changeHost}>
-          {hosts.map(host => <Select.Option key={host.id} value={host.id}>{host.name} ({host.hostname})</Select.Option>)}
-        </Select>
+        <div className={styles.sidebarHeader}><div><DockerOutlined/> {t(initialView === 'standalone' ? '容器' : 'Compose 项目')}</div></div>
         <div className={styles.listHeader}>
-          <span>{t('项目')}{stale && projects.length ? ` · ${t('刷新中')}` : ''}</span>
+          <span>{t(isContainerWorkspace ? '容器' : '项目')}{stale && (projects.length || standalone.length) ? ` · ${t('刷新中')}` : ''}</span>
           <Space size={2}>
-            {hasPermission('docker.project.add') && (
+            {!isContainerWorkspace && hasPermission('docker.project.add') && (
               <Button type="text" size="small" icon={<PlusOutlined/>} disabled={!hostId}
                       title={t('新建项目')} onClick={() => setCreateOpen(true)}/>
             )}
@@ -828,32 +1009,42 @@ function ProjectConsole({hosts, hostId, onHostChange}) {
                     disabled={hostId === undefined} title={t('刷新')} onClick={refreshProjects}/>
           </Space>
         </div>
-        <Spin spinning={fetching && !projects.length} wrapperClassName={styles.projectSpin}>
+        <Spin spinning={fetching && !projects.length && !standalone.length} wrapperClassName={styles.projectSpin}>
           <div className={styles.projectList}>
-            {projects.map(item => (
+            {isContainerWorkspace ? displayedContainers.map(item => (
+              <button key={item.name} className={logService === item.name ? styles.activeProject : styles.project}
+                      onClick={() => {
+                        selectLogTarget(item.name);
+                        if (!follow) unifiedContainerAction('logs', item);
+                      }}>
+                <span>{item.name}</span><small>{item.image} · {item.state}</small>
+              </button>
+            )) : projects.map(item => (
               <button key={projectKey(item)} className={view === 'project' && projectKey(item) === activeKey ? styles.activeProject : styles.project}
                       onClick={() => selectProject(item)}>
                 <span>{item.name}</span><small>{item.containers.length} containers · {item.workdir}</small>
               </button>
             ))}
-            {!fetching && !projects.length && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE}
-              description={hostId === undefined ? t('请先选择服务器') : t('该服务器暂无项目')}/>}
+            {!fetching && !(isContainerWorkspace ? displayedContainers.length : projects.length) && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE}
+              description={hostId === undefined ? t('请先选择服务器') : t(isContainerWorkspace ? '该服务器暂无容器' : '该服务器暂无项目')}/>}
           </div>
         </Spin>
-        <div className={styles.resourceNav}>
-          <button disabled={!hostId}
-                  className={view === 'standalone' ? styles.activeProject : styles.project}
-                  onClick={() => setView('standalone')}>
-            <span>{t('独立容器')} ({standalone.length})</span>
-          </button>
-        </div>
+        {!isContainerWorkspace && (
+          <div className={styles.resourceNav}>
+            <button disabled={!hostId}
+                    className={view === 'standalone' ? styles.activeProject : styles.project}
+                    onClick={() => setView('standalone')}>
+              <span>{t('独立容器')} ({standalone.length})</span>
+            </button>
+          </div>
+        )}
       </aside>
       <main className={styles.content}>
         {view === 'standalone' ? (
           <>
             <header className={styles.header}>
               <div>
-                <h2>{t('独立容器')}</h2>
+                <h2>{t(isContainerWorkspace ? '容器' : '独立容器')}</h2>
                 <span>{hosts.find(item => item.id === hostId)?.name}</span>
               </div>
               <Space>
@@ -864,18 +1055,20 @@ function ProjectConsole({hosts, hostId, onHostChange}) {
                     {t('清理已停止 ({})', exitedContainers.length)}
                   </Button>
                 )}
-                <Button onClick={() => setView('project')}>{t('返回项目')}</Button>
+                {!isContainerWorkspace && <Button onClick={() => setView('project')}>{t('返回项目')}</Button>}
               </Space>
             </header>
-            <section className={styles.toolbar}>
-              <Alert type="info" showIcon
-                     message={t('这些容器不由 Docker Compose 管理（docker run 启动，或 Compose 标签残缺）。Moon 没有它们的启动参数，删除后无法在此页面重建。')}/>
-            </section>
+            {!isContainerWorkspace && (
+              <section className={styles.toolbar}>
+                <Alert type="info" showIcon
+                       message={t('这些容器不由 Docker Compose 管理（docker run 启动，或 Compose 标签残缺）。Moon 没有它们的启动参数，删除后无法在此页面重建。')}/>
+              </section>
+            )}
             <section className={styles.containers}>
               <Table size="small" rowKey="name" pagination={false} columns={standaloneColumns}
-                     dataSource={standalone} scroll={{x: 1180}}
+                     dataSource={displayedContainers} scroll={{x: 1180}}
                      locale={{emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE}
-                                                description={t('该服务器上所有容器都由 Compose 管理')}/>}}/>
+                                                description={t(isContainerWorkspace ? '该服务器暂无容器' : '该服务器上所有容器都由 Compose 管理')}/>}}/>
             </section>
             <section className={styles.editorArea}>
               <Tabs activeKey="logs" items={[{key: 'logs', label: t('日志'), children: logPane}]}
@@ -930,6 +1123,7 @@ function ProjectConsole({hosts, hostId, onHostChange}) {
       </main>
       <CreateProject open={createOpen} hostId={hostId} onClose={() => setCreateOpen(false)}
                      onCreated={result => {
+                       invalidateOverview();
                        setCreateOpen(false);
                        discover(hostId, `${result.name}|${result.workdir}|${result.config_file}`);
                      }}/>

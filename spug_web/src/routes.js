@@ -62,15 +62,14 @@ const routes = [
     component: DashboardIndex
   },
   {icon: <CloudServerOutlined/>, title: t('主机管理'), auth: 'host.host.view', path: '/host', component: HostIndex},
-  {
-    icon: <DockerOutlined/>, title: t('容器管理'), auth: 'docker.project.view', child: [
-      {title: t('项目管理'), auth: 'docker.project.view', path: '/docker/projects', component: DockerIndex},
-      {title: t('镜像管理'), auth: 'docker.project.view', path: '/docker/images', component: DockerIndex},
-      {title: t('网络管理'), auth: 'docker.project.view', path: '/docker/networks', component: DockerIndex},
-      {title: t('存储管理'), auth: 'docker.project.view', path: '/docker/volumes', component: DockerIndex},
-      {path: '/docker', auth: 'docker.project.view', component: () => <Redirect to="/docker/projects"/>},
-    ]
-  },
+  {icon: <DockerOutlined/>, title: 'Docker', auth: 'docker.project.view', path: '/docker', component: DockerIndex},
+  {auth: 'docker.project.view', path: '/docker/overview', component: () => <Redirect to="/docker"/>},
+  {auth: 'docker.project.view', path: '/docker/containers', component: () => <Redirect to="/docker?tab=containers"/>},
+  {auth: 'docker.project.view', path: '/docker/compose', component: () => <Redirect to="/docker?tab=compose"/>},
+  {auth: 'docker.project.view', path: '/docker/projects', component: () => <Redirect to="/docker?tab=compose"/>},
+  {auth: 'docker.project.view', path: '/docker/images', component: () => <Redirect to="/docker?tab=images"/>},
+  {auth: 'docker.project.view', path: '/docker/networks', component: () => <Redirect to="/docker?tab=networks"/>},
+  {auth: 'docker.project.view', path: '/docker/volumes', component: () => <Redirect to="/docker?tab=volumes"/>},
   {
     icon: <CodeOutlined/>, title: t('批量执行'), auth: 'exec.task.do|exec.template.view', child: [
       {title: t('执行任务'), auth: 'exec.task.do', path: '/exec/task', component: ExecTask},

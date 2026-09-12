@@ -2,11 +2,12 @@ from django.urls import path
 
 from .views import (
     ActionView, ConfigView, ContainerView, CreateView, DiscoverView,
-    LogStreamView, RemoveView, ResourceView, StatsView,
+    LogStreamView, OverviewView, RemoveView, ResourceView, StatsView,
 )
 
 
 urlpatterns = [
+    path('overview/', OverviewView.as_view()),
     path('discover/', DiscoverView.as_view()),
     path('create/', CreateView.as_view()),
     path('remove/', RemoveView.as_view()),

@@ -7,7 +7,7 @@ Date: 2026-09-08
 - Moon login: desktop/mobile layout, local NASA lunar image, original crescent/orbit mark, SVG/192 PNG/512 PNG/32 ICO.
 - Real Ant Design form: labels/autofill, required fields, standard/LDAP, MFA/resend, keyboard submit, pending state, original session storage/redirect and real-IP warning.
 - Current active frontend and backend generated notifications rebranded. User input, shell protocols, technical identifiers, external URLs and source license/copyright retained.
-- spug_web2 is unused experimental code and was not changed. Existing monitor work was not changed.
+- The unused experimental `spug_web2` frontend was removed after `spug_web` was confirmed as the only build and deployment target. Existing monitor work was not changed.
 
 ## Evidence
 

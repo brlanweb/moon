@@ -16,21 +16,63 @@ from apps.docker.client import (
     build_monitor_logs_command,
     build_monitor_recover_command,
     build_monitor_restart_command,
+    build_overview_command,
     build_resource_command,
     build_service_hash_command,
     parse_service_hash,
     read_service_hash,
     build_stats_command,
     cache_key,
+    container_names,
+    execute_container,
     iter_stats_frames,
     parse_docker_inspect,
     parse_inspect,
+    parse_overview,
     parse_resource_list,
     save_config,
     create_project,
     remove_project,
     validate_project_ref,
 )
+
+
+class DockerOverviewTests(SimpleTestCase):
+    def test_build_overview_command_reads_server_version_and_engine_info(self):
+        command = build_overview_command()
+
+        self.assertIn("docker version --format '{{json .Server}}'", command)
+        self.assertIn("docker info --format '{{json .}}'", command)
+
+    def test_parse_overview_normalizes_engine_summary(self):
+        output = '\n'.join([
+            json.dumps({
+                'Version': '24.0.1', 'ApiVersion': '1.43',
+                'MinAPIVersion': '1.12',
+            }),
+            json.dumps({
+                'ContainersRunning': 12, 'ContainersPaused': 0,
+                'ContainersStopped': 1, 'Containers': 13, 'Images': 8,
+                'NCPU': 4, 'MemTotal': 16320875724,
+                'OperatingSystem': 'CentOS Linux 7 (Core)',
+                'Architecture': 'x86_64', 'KernelVersion': '3.10.0',
+                'Driver': 'overlay2',
+            }),
+        ])
+
+        self.assertEqual(parse_overview(output), {
+            'engine_version': '24.0.1', 'api_version': '1.43',
+            'min_api_version': '1.12', 'containers_running': 12,
+            'containers_paused': 0, 'containers_stopped': 1,
+            'containers': 13, 'images': 8, 'cpus': 4,
+            'memory': '15.2 GiB', 'operating_system': 'CentOS Linux 7 (Core)',
+            'architecture': 'amd64', 'kernel_version': '3.10.0',
+            'storage_driver': 'overlay2',
+        })
+
+    def test_parse_overview_rejects_incomplete_output(self):
+        with self.assertRaisesRegex(DockerClientError, '概览信息解析失败'):
+            parse_overview('{}')
 
 
 class DockerResourceTests(SimpleTestCase):
@@ -399,6 +441,38 @@ class DockerStandaloneTests(SimpleTestCase):
             build_container_command('rm', 'tei-bge-m3')
         with self.assertRaises(DockerClientError):
             build_container_command('stop', 'a; rm -rf /')
+
+    @patch('apps.docker.client.invalidate_projects')
+    @patch('apps.docker.client._run', return_value=(0, 'restarted'))
+    @patch('apps.docker.client.discover_all')
+    def test_managed_container_restart_targets_exact_container_name(self, discover, run, _invalidate):
+        discover.return_value = {
+            'projects': [{'containers': [{'name': 'demo-web-1'}, {'name': 'demo-web-2'}]}],
+            'standalone': [{'name': 'redis'}],
+        }
+
+        self.assertEqual(execute_container(object(), 'restart', 'demo-web-1'), {'output': 'restarted'})
+        self.assertEqual(run.call_args.args[1], 'docker restart -- demo-web-1')
+
+    @patch('apps.docker.client.discover_all')
+    def test_managed_container_cannot_be_removed_directly(self, discover):
+        discover.return_value = {
+            'projects': [{'containers': [{'name': 'demo-web-1'}]}],
+            'standalone': [],
+        }
+
+        host = object()
+        with self.assertRaisesRegex(DockerClientError, 'Compose'):
+            execute_container(host, 'remove', 'demo-web-1')
+        discover.assert_called_once_with(host, use_cache=False)
+
+    def test_container_names_includes_compose_and_standalone_containers(self):
+        payload = {
+            'projects': [{'containers': [{'name': 'demo-web-1'}, {'name': 'demo-web-2'}]}],
+            'standalone': [{'name': 'redis'}],
+        }
+
+        self.assertEqual(container_names(payload), {'demo-web-1', 'demo-web-2', 'redis'})
 
     def test_remove_container_does_not_touch_volumes(self):
         command = build_container_command('remove', 'qwen35-4b')

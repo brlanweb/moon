@@ -9,13 +9,16 @@ from hashlib import sha256
 
 from apps.account.utils import has_host_perm
 from apps.docker.client import (
+    all_containers,
     DockerClientError,
     build_container_logs_follow_command,
     build_logs_follow_command,
+    container_names,
     create_project,
     discover_all,
     execute,
     execute_container,
+    get_overview,
     get_project,
     manage_resource,
     peek_inspect,
@@ -76,6 +79,20 @@ def _target_form(body, with_action=False):
     return JsonParser(*arguments).parse(body)
 
 
+class OverviewView(View):
+    @auth('docker.project.view')
+    def post(self, request):
+        form, error = JsonParser(
+            Argument('host_id', type=int, help='请选择服务器'),
+        ).parse(request.body)
+        if error:
+            return json_response(error=error)
+        try:
+            return json_response(get_overview(_host(request.user, form.host_id)))
+        except DockerClientError as exc:
+            return json_response(error=str(exc))
+
+
 class DiscoverView(View):
     @auth('docker.project.view')
     def post(self, request):
@@ -103,7 +120,7 @@ class DiscoverView(View):
 
 
 class ContainerView(View):
-    """独立容器（非 compose 管理）的受限操作：启停、重启、日志、删除。"""
+    """精确容器操作：启停、重启、日志；仅独立容器允许删除。"""
 
     @auth('docker.project.view|docker.project.do|docker.project.del')
     def post(self, request):
@@ -160,8 +177,8 @@ class StatsView(View):
                 containers = get_project(host, form.project, form.config_file).containers
             elif form.names:
                 wanted = {item for item in form.names.split(',') if item}
-                # 只允许采样主机上真实存在的独立容器，避免用它探测任意容器
-                containers = [item for item in discover_all(host, use_cache=True)['standalone']
+                # 只允许采样主机上真实存在的容器，避免用它探测任意名称。
+                containers = [item for item in all_containers(discover_all(host, use_cache=True))
                               if item['name'] in wanted]
             else:
                 return json_response(error='请指定 Compose 项目或容器')
@@ -217,8 +234,8 @@ class LogStreamView(View):
                 project = get_project(host, form.project, form.config_file)
                 command = build_logs_follow_command(project, form.service, form.tail)
             elif form.name:
-                # 与 ContainerView 一致：只允许跟随主机上真实存在的独立容器
-                known = {item['name'] for item in discover_all(host, use_cache=True)['standalone']}
+                # 与 ContainerView 一致：只允许跟随主机上真实存在的容器。
+                known = container_names(discover_all(host, use_cache=True))
                 if form.name not in known:
                     return json_response(error='容器已变化，请刷新后重试')
                 command = build_container_logs_follow_command(form.name, form.tail)
