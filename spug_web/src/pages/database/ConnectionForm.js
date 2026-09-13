@@ -70,10 +70,10 @@ export default function ConnectionForm({record, visible, onClose, onSaved}) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   useEffect(() => {
+    setUriVisible(false);
+    setConnectionUri('');
     if (visible) {
       setTestState(undefined);
-      setUriVisible(false);
-      setConnectionUri('');
       setAdvancedOpen(false);
       form.resetFields();
       form.setFieldsValue(initialValues(record));
@@ -93,12 +93,29 @@ export default function ConnectionForm({record, visible, onClose, onSaved}) {
     form.setFieldsValue({port: PORTS[type], database: type === 'redis' ? '0' : ''});
   }
 
+  function clearConnectionUri() {
+    setConnectionUri('');
+    setUriVisible(false);
+  }
+
+  function handleUriToggle() {
+    if (uriVisible) {
+      clearConnectionUri();
+    } else {
+      setUriVisible(true);
+    }
+  }
+
+  function handleClose() {
+    clearConnectionUri();
+    onClose();
+  }
+
   function handleUriImport() {
     try {
       form.setFieldsValue(parseConnectionUri(connectionUri));
       setTestState(undefined);
-      setConnectionUri('');
-      setUriVisible(false);
+      clearConnectionUri();
       message.success(t('连接 URI 已导入'));
     } catch (error) {
       message.error(t(error.message));
@@ -151,7 +168,7 @@ export default function ConnectionForm({record, visible, onClose, onSaved}) {
         )}
       </div>
       <div>
-        <Button onClick={onClose}>{t('取消')}</Button>
+        <Button onClick={handleClose}>{t('取消')}</Button>
         <Button icon={<LinkOutlined/>} loading={testing} onClick={handleTest}>{t('测试连接')}</Button>
         <Button type="primary" icon={<SaveOutlined/>} loading={saving} onClick={handleSave}>{t('保存连接')}</Button>
       </div>
@@ -166,7 +183,7 @@ export default function ConnectionForm({record, visible, onClose, onSaved}) {
       width={760}
       maskClosable={false}
       centered
-      onCancel={onClose}
+      onCancel={handleClose}
       footer={footer}>
       <Form
         form={form}
@@ -175,12 +192,12 @@ export default function ConnectionForm({record, visible, onClose, onSaved}) {
         onValuesChange={() => setTestState(undefined)}>
         <div className={styles.importSection}>
           <Button type="link" size="small" icon={<ImportOutlined/>}
-                  onClick={() => setUriVisible(current => !current)}>
+                  onClick={handleUriToggle}>
             {t('导入连接 URI')}
           </Button>
           {uriVisible && (
             <div className={styles.uriImport}>
-              <Input
+              <Input.Password
                 id="connection_uri"
                 value={connectionUri}
                 autoComplete="off"

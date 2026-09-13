@@ -36,6 +36,12 @@ function decode(value) {
   }
 }
 
+function validatePercentEscapes(uri) {
+  if (/%(?![0-9a-f]{2})/i.test(uri)) {
+    throw new Error('连接 URI 编码无效');
+  }
+}
+
 export function parseConnectionUri(value) {
   const uri = String(value || '').trim();
   const schemeMatch = uri.match(/^([a-z][a-z0-9+.-]*):\/\//i);
@@ -44,6 +50,7 @@ export function parseConnectionUri(value) {
   const scheme = schemeMatch[1].toLowerCase();
   const config = DATABASE_TYPES[scheme];
   if (!config) throw new Error(`不支持的数据库协议：${scheme}`);
+  validatePercentEscapes(uri);
 
   const endpoint = authorityParts(uri, schemeMatch[0].length);
   if (!endpoint.host) throw new Error('连接 URI 缺少主机地址');
@@ -63,6 +70,15 @@ export function parseConnectionUri(value) {
   }
 
   const ssl = (parsed.searchParams.get('ssl') || '').toLowerCase();
+  const sslmode = (parsed.searchParams.get('sslmode') || '').toLowerCase();
+  const secure = (parsed.searchParams.get('secure') || '').toLowerCase();
+  let useSsl = Boolean(config.ssl) || ['true', '1', 'require'].includes(ssl);
+  if (config.type === 'postgresql') {
+    if (sslmode === 'disable') useSsl = false;
+    if (['require', 'verify-ca', 'verify-full'].includes(sslmode)) useSsl = true;
+  }
+  if (config.type === 'clickhouse' && ['true', '1'].includes(secure)) useSsl = true;
+
   return {
     type: config.type,
     host: parsed.hostname.replace(/^\[|\]$/g, ''),
@@ -70,6 +86,6 @@ export function parseConnectionUri(value) {
     username: decode(parsed.username),
     password: decode(parsed.password),
     database: decode(parsed.pathname.replace(/^\//, '')),
-    use_ssl: Boolean(config.ssl) || ['true', '1', 'require'].includes(ssl),
+    use_ssl: useSsl,
   };
 }

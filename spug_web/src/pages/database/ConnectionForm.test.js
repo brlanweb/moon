@@ -26,13 +26,18 @@ async function flush() {
   });
 }
 
-function renderForm(record = {}) {
+function renderForm(record = {}, props = {}) {
   act(() => {
     ReactDOM.render(
-      <ConnectionForm record={record} visible onClose={jest.fn()} onSaved={jest.fn()}/>,
+      <ConnectionForm record={record} visible onClose={jest.fn()} onSaved={jest.fn()} {...props}/>,
       root,
     );
   });
+}
+
+function clickControl(control) {
+  const element = typeof control === 'string' ? document.getElementById(control) : control;
+  act(() => element.click());
 }
 
 beforeEach(() => {
@@ -87,6 +92,51 @@ test('imports a connection URI into real form controls without submitting the ra
   }
 });
 
+test('masks the URI and clears it when the import area is collapsed', () => {
+  renderForm();
+  act(() => button('导入连接 URI').click());
+  expect(document.getElementById('connection_uri').type).toBe('password');
+  act(() => change('connection_uri', 'postgresql://user:secret@db.example.com/app'));
+  act(() => button('导入连接 URI').click());
+  act(() => button('导入连接 URI').click());
+  expect(document.getElementById('connection_uri').value).toBe('');
+});
+
+test('clears the URI when the outer modal closes and reopens', () => {
+  const props = {onClose: jest.fn(), onSaved: jest.fn()};
+  renderForm({}, props);
+  act(() => button('导入连接 URI').click());
+  act(() => change('connection_uri', 'postgresql://user:secret@db.example.com/app'));
+  act(() => document.querySelector('.ant-modal-close').click());
+  expect(props.onClose).toHaveBeenCalledTimes(1);
+  act(() => button('导入连接 URI').click());
+  expect(document.getElementById('connection_uri').value).toBe('');
+
+  act(() => change('connection_uri', 'postgresql://user:new-secret@db.example.com/app'));
+  act(() => {
+    ReactDOM.render(<ConnectionForm record={{}} visible={false} {...props}/>, root);
+  });
+  act(() => {
+    ReactDOM.render(<ConnectionForm record={{}} visible {...props}/>, root);
+  });
+  act(() => button('导入连接 URI').click());
+  expect(document.getElementById('connection_uri').value).toBe('');
+});
+
+test('keeps an invalid URI visible so the user can correct it', () => {
+  const error = jest.spyOn(message, 'error').mockImplementation(() => {});
+  try {
+    renderForm();
+    act(() => button('导入连接 URI').click());
+    act(() => change('connection_uri', 'postgresql://user%ZZ@db.example.com/app'));
+    act(() => button('解析并填充').click());
+    expect(document.getElementById('connection_uri').value).toBe('postgresql://user%ZZ@db.example.com/app');
+    expect(error).toHaveBeenCalledWith('连接 URI 编码无效');
+  } finally {
+    error.mockRestore();
+  }
+});
+
 test('submits governance defaults for a new connection from collapsed advanced settings', async () => {
   renderForm();
   expect(button('高级设置').getAttribute('aria-expanded')).toBe('false');
@@ -110,6 +160,36 @@ test('submits governance defaults for a new connection from collapsed advanced s
     read_only: false,
     environment: 'normal',
   }));
+});
+
+test('submits the exact payload after changing every governance control', async () => {
+  renderForm();
+  act(() => button('高级设置').click());
+  act(() => change('name', '生产只读库'));
+  act(() => change('connect_timeout', '25'));
+  act(() => change('query_timeout', '180'));
+  act(() => change('idle_timeout', '0'));
+  clickControl('read_only');
+  clickControl(document.querySelector('input[value="production"]'));
+  act(() => button('保存连接').click());
+  await flush();
+
+  expect(http.post).toHaveBeenCalledWith('/api/database/connection/', {
+    type: 'mysql',
+    name: '生产只读库',
+    database: undefined,
+    host: '127.0.0.1',
+    port: 3306,
+    username: undefined,
+    password: undefined,
+    use_ssl: false,
+    connect_timeout: 25,
+    query_timeout: 180,
+    idle_timeout: 0,
+    read_only: true,
+    environment: 'production',
+    id: undefined,
+  });
 });
 
 test('shows saved governance values and supplies defaults for legacy records', () => {
@@ -148,6 +228,49 @@ test('shows saved governance values and supplies defaults for legacy records', (
   expect(document.getElementById('idle_timeout').value).toBe('30');
   expect(document.getElementById('read_only').getAttribute('aria-checked')).toBe('false');
   expect(document.querySelector('input[value="normal"]').checked).toBe(true);
+});
+
+test('saves an edited connection with echoed governance values through the real controls', async () => {
+  renderForm({
+    id: 7,
+    name: '生产分析库',
+    type: 'clickhouse',
+    host: 'db.example.com',
+    port: 8123,
+    database: 'analytics',
+    username: 'analyst',
+    use_ssl: true,
+    connect_timeout: 20,
+    query_timeout: 120,
+    idle_timeout: 15,
+    read_only: true,
+    environment: 'production',
+  });
+  act(() => button('高级设置').click());
+  act(() => change('connect_timeout', '30'));
+  act(() => change('query_timeout', '240'));
+  act(() => change('idle_timeout', '45'));
+  clickControl('read_only');
+  clickControl(document.querySelector('input[value="normal"]'));
+  act(() => button('保存连接').click());
+  await flush();
+
+  expect(http.post).toHaveBeenCalledWith('/api/database/connection/', {
+    id: 7,
+    name: '生产分析库',
+    type: 'clickhouse',
+    host: 'db.example.com',
+    port: 8123,
+    database: 'analytics',
+    username: 'analyst',
+    password: '',
+    use_ssl: true,
+    connect_timeout: 30,
+    query_timeout: 240,
+    idle_timeout: 45,
+    read_only: false,
+    environment: 'normal',
+  });
 });
 
 test('keeps advanced validation active after the settings are collapsed again', async () => {

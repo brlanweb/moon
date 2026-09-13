@@ -36,6 +36,22 @@ describe('parseConnectionUri', () => {
     expect(parseConnectionUri(uri).use_ssl).toBe(true);
   });
 
+  test.each([
+    'require',
+    'verify-ca',
+    'verify-full',
+  ])('enables PostgreSQL SSL for sslmode=%s', sslmode => {
+    expect(parseConnectionUri(`postgresql://db.example.com/app?sslmode=${sslmode}`).use_ssl).toBe(true);
+  });
+
+  test('disables PostgreSQL SSL for sslmode=disable', () => {
+    expect(parseConnectionUri('postgresql://db.example.com/app?sslmode=disable').use_ssl).toBe(false);
+  });
+
+  test.each(['true', '1'])('enables ClickHouse SSL for secure=%s', secure => {
+    expect(parseConnectionUri(`clickhouse://db.example.com/app?secure=${secure}`).use_ssl).toBe(true);
+  });
+
   test('keeps SSL disabled for an unrelated query value', () => {
     expect(parseConnectionUri('mysql://db.example.com/app?ssl=false').use_ssl).toBe(false);
   });
@@ -47,5 +63,14 @@ describe('parseConnectionUri', () => {
     ['mysql:///app', '连接 URI 缺少主机地址'],
   ])('rejects %s with a displayable error', (uri, error) => {
     expect(() => parseConnectionUri(uri)).toThrow(error);
+  });
+
+  test.each([
+    'mysql://user%ZZ:password@db.example.com/app',
+    'mysql://user:password%2@db.example.com/app',
+    'mysql://db.example.com/app%',
+    'mysql://db.example.com/app?label=%GG',
+  ])('rejects invalid percent escapes in %s', uri => {
+    expect(() => parseConnectionUri(uri)).toThrow('连接 URI 编码无效');
   });
 });
