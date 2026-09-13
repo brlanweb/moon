@@ -95,6 +95,20 @@ class SqlClassificationTests(SimpleTestCase):
                 self.assertIs(result.read_only, False)
                 self.assertIs(result.has_data_change, True)
 
+    def test_procedure_execution_commands_are_data_changes(self):
+        for database_type, command, statement_type in (
+                ('mysql', 'CALL rebuild_summary()', 'CALL'),
+                ('postgresql', 'CALL rebuild_summary()', 'CALL'),
+                ('mysql', 'EXEC rebuild_summary', 'EXEC'),
+                ('mysql', 'EXECUTE rebuild_summary', 'EXECUTE')):
+            with self.subTest(database_type=database_type, command=command):
+                result = classify_command(database_type, command)
+
+                self.assertEqual(result.statement_types, (statement_type,))
+                self.assertIs(result.read_only, False)
+                self.assertIs(result.has_data_change, True)
+                self.assertIs(result.known, True)
+
     def test_mysql_executable_comment_is_conservatively_a_data_change(self):
         for database_type, command in (
                 ('mysql', '/*!40101 DELETE FROM users */'),
@@ -273,6 +287,19 @@ class CommandPolicyTests(SimpleTestCase):
         self.assertIs(decision.requires_confirmation, True)
         self.assertTrue(decision.confirmation_token)
         self.assertEqual(decision.statement_types, ('UPDATE',))
+
+    def test_production_procedure_execution_requires_confirmation(self):
+        connection = self.connection(environment='production')
+
+        for command in (
+                'CALL rebuild_summary()',
+                'EXEC rebuild_summary',
+                'EXECUTE rebuild_summary'):
+            with self.subTest(command=command):
+                decision = enforce_command_policy(connection, 7, command)
+
+                self.assertIs(decision.requires_confirmation, True)
+                self.assertTrue(decision.confirmation_token)
 
     def test_valid_confirmation_token_allows_matching_command(self):
         connection = self.connection(environment='production')

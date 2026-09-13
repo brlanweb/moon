@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Empty, Modal, Space, Table, Tag, Tooltip, message } from 'antd';
 import {
   CaretRightOutlined,
@@ -31,15 +31,19 @@ export default function QueryPanel({
   command,
   onCommandChange,
   onActivity,
-  onQueryStart,
-  onQueryFinish,
+  onRunningChange,
 }) {
   const editorRef = useRef();
+  const mountedRef = useRef(true);
   const runningRef = useRef(false);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState();
   const [confirmation, setConfirmation] = useState();
   const value = command === undefined ? INITIAL_COMMAND[connection.type] : command;
+
+  useEffect(() => () => {
+    mountedRef.current = false;
+  }, []);
 
   function changeCommand(nextValue) {
     onCommandChange(nextValue);
@@ -55,13 +59,14 @@ export default function QueryPanel({
     if (runningRef.current) return Promise.resolve();
     runningRef.current = true;
     setRunning(true);
-    if (onQueryStart) onQueryStart();
+    if (onRunningChange) onRunningChange(true);
     const timeout = Math.max(
       45000,
       (Number(connection.connect_timeout || 0) + Number(connection.query_timeout || 0)) * 1000 + 5000,
     );
     return http.post('/api/database/execute/', payload, {timeout})
       .then(data => {
+        if (!mountedRef.current) return;
         if (data.requires_confirmation) {
           setConfirmation({
             payload,
@@ -76,8 +81,8 @@ export default function QueryPanel({
       })
       .finally(() => {
         runningRef.current = false;
-        setRunning(false);
-        if (onQueryFinish) onQueryFinish();
+        if (mountedRef.current) setRunning(false);
+        if (onRunningChange) onRunningChange(false);
       });
   }
 

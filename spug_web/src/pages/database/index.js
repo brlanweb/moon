@@ -50,6 +50,7 @@ export default function DatabaseConsole() {
   const activeIdRef = useRef(activeId);
   const lastActivityRef = useRef({});
   const inFlightQueriesRef = useRef({});
+  const sessionGenerationRef = useRef({});
   const requestGenerationRef = useRef({});
   const selectionGenerationRef = useRef({});
 
@@ -83,15 +84,21 @@ export default function DatabaseConsole() {
     lastActivityRef.current[id] = Date.now();
   }
 
-  function startQuery(id) {
-    inFlightQueriesRef.current[id] = (inFlightQueriesRef.current[id] || 0) + 1;
-    markActivity(id);
+  function nextSessionGeneration(id) {
+    const generation = (sessionGenerationRef.current[id] || 0) + 1;
+    sessionGenerationRef.current[id] = generation;
+    return generation;
   }
 
-  function finishQuery(id) {
-    const runningQueries = inFlightQueriesRef.current[id];
-    if (runningQueries === undefined) return;
-    inFlightQueriesRef.current[id] = Math.max(0, runningQueries - 1);
+  function updateQueryRunning(id, generation, running) {
+    if (sessionGenerationRef.current[id] !== generation) return;
+    if (running) {
+      inFlightQueriesRef.current[id] = (inFlightQueriesRef.current[id] || 0) + 1;
+    } else {
+      const runningQueries = inFlightQueriesRef.current[id];
+      if (runningQueries === undefined) return;
+      inFlightQueriesRef.current[id] = Math.max(0, runningQueries - 1);
+    }
     markActivity(id);
   }
 
@@ -127,6 +134,7 @@ export default function DatabaseConsole() {
   }
 
   function disconnectConnection(id) {
+    nextSessionGeneration(id);
     nextRequestGeneration(id);
     const {nextTabs, nextActive} = tabStateAfterClose(id);
     const activeChanged = activeIdRef.current === id;
@@ -222,6 +230,7 @@ export default function DatabaseConsole() {
       activate();
       return;
     }
+    const startsSession = !metadata[item.id];
     const generation = nextRequestGeneration(item.id);
     const selectionGeneration = selectionGenerationRef.current[item.id] || 0;
     setConnectingId(item.id);
@@ -234,6 +243,7 @@ export default function DatabaseConsole() {
     })
       .then(data => {
         if (requestGenerationRef.current[item.id] !== generation) return;
+        if (startsSession) nextSessionGeneration(item.id);
         setMetadata(current => ({...current, [item.id]: data}));
         if ((selectionGenerationRef.current[item.id] || 0) === selectionGeneration) {
           initializeActiveDatabase(item, data);
@@ -332,6 +342,7 @@ export default function DatabaseConsole() {
   const tabItems = tabs.map(id => {
     const item = connections.find(connection => connection.id === id);
     if (!item) return null;
+    const sessionGeneration = sessionGenerationRef.current[id];
     return {
       key: String(id),
       label: item.name,
@@ -341,8 +352,7 @@ export default function DatabaseConsole() {
           activeDatabase={activeDatabases[id] || item.database}
           command={commands[id]}
           onActivity={() => markActivity(id)}
-          onQueryStart={() => startQuery(id)}
-          onQueryFinish={() => finishQuery(id)}
+          onRunningChange={running => updateQueryRunning(id, sessionGeneration, running)}
           onCommandChange={value => setCommands(current => ({...current, [id]: value}))}/>
       ),
     };

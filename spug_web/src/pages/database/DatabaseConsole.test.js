@@ -668,6 +668,86 @@ test('idle cleanup skips a running query and restarts the idle clock after compl
   }
 });
 
+test('a stale query completion cannot reduce the reconnected session running count', async () => {
+  jest.useFakeTimers();
+  const now = jest.spyOn(Date, 'now').mockReturnValue(0);
+  const staleQuery = deferred();
+  const currentQuery = deferred();
+  const info = jest.spyOn(message, 'info').mockImplementation(() => {});
+  const error = jest.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    await renderConsole();
+    await openConnection('主库');
+    http.post.mockReturnValueOnce(staleQuery.promise).mockReturnValueOnce(currentQuery.promise);
+
+    act(() => findText('.ant-tabs-tabpane-active button', '运行').click());
+    await disconnect('主库');
+    now.mockReturnValue(1000);
+    await openConnection('主库');
+    act(() => findText('.ant-tabs-tabpane-active button', '运行').click());
+
+    now.mockReturnValue(60000);
+    await act(async () => {
+      staleQuery.resolve({columns: ['stale'], rows: [[1]], affected: 0, elapsed: 60000});
+      await staleQuery.promise;
+    });
+    now.mockReturnValue(121000);
+    act(() => jest.advanceTimersByTime(121000));
+    await flush();
+
+    expect(findText('.ant-tabs-tab', '主库')).not.toBeUndefined();
+    expect(info).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => {
+      currentQuery.resolve({columns: ['current'], rows: [[1]], affected: 0, elapsed: 120000});
+      await currentQuery.promise;
+    });
+    now.mockRestore();
+    info.mockRestore();
+    error.mockRestore();
+  }
+});
+
+test('a stale query completion cannot refresh the reconnected session activity time', async () => {
+  jest.useFakeTimers();
+  const now = jest.spyOn(Date, 'now').mockReturnValue(0);
+  const staleQuery = deferred();
+  const currentQuery = deferred();
+  const info = jest.spyOn(message, 'info').mockImplementation(() => {});
+  try {
+    await renderConsole();
+    await openConnection('主库');
+    http.post.mockReturnValueOnce(staleQuery.promise).mockReturnValueOnce(currentQuery.promise);
+
+    act(() => findText('.ant-tabs-tabpane-active button', '运行').click());
+    await disconnect('主库');
+    now.mockReturnValue(1000);
+    await openConnection('主库');
+    act(() => findText('.ant-tabs-tabpane-active button', '运行').click());
+    now.mockReturnValue(10000);
+    await act(async () => {
+      currentQuery.resolve({columns: ['current'], rows: [[1]], affected: 0, elapsed: 9000});
+      await currentQuery.promise;
+    });
+
+    now.mockReturnValue(60000);
+    await act(async () => {
+      staleQuery.resolve({columns: ['stale'], rows: [[1]], affected: 0, elapsed: 60000});
+      await staleQuery.promise;
+    });
+    now.mockReturnValue(71000);
+    act(() => jest.advanceTimersByTime(71000));
+    await flush();
+
+    expect(findText('.ant-tabs-tab', '主库')).toBeUndefined();
+    expect(info).toHaveBeenCalledWith('连接【主库】因空闲已断开');
+  } finally {
+    now.mockRestore();
+    info.mockRestore();
+  }
+});
+
 test.each([
   [1, 1],
   [undefined, undefined],

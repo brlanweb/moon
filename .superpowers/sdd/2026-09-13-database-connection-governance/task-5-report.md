@@ -185,3 +185,31 @@ TDD 红灯确认：
 - sqlparse 约束语义检查：两处均为 `>=0.5.3,<0.7.0`。
 - `git diff --check`：通过。
 - Docker 日志前端的 3 个既有未提交文件未修改，且不纳入本次暂存或提交。
+
+## 最终审查两个 Important 修复
+
+### 根因与修改
+
+- `CALL`、`EXEC`、`EXECUTE` 原先属于已知非只读语句，但不属于数据变更；生产确认仅检查 `has_data_change` 或未知命令，因此这三类过程执行会绕过确认。现已将它们归入 SQL 数据变更类型，继续保持只读连接拒绝，并要求生产环境确认。
+- 查询运行计数原先只以连接 ID 为键。逻辑断开后，新会话复用同一连接 ID，旧查询 Promise 的完成回调会减少新会话计数并刷新新会话活动时间。现为每次逻辑连接维护递增的 session generation，`onRunningChange(true/false)` 捕获并携带对应 generation；父组件只接受当前 generation 的回调。
+- `QueryPanel` 在查询期间卸载后不再更新自身 React state，但仍发出带原 generation 的完成通知，由父组件按 generation 丢弃过期回调。
+
+### 严格 TDD 记录
+
+红灯阶段：
+
+- 后端新增过程执行分类和生产确认测试；2 个测试中的 7 个子用例按预期失败，均显示 `has_data_change` 或 `requires_confirmation` 仍为 `False`。
+- 前端新增断开、重连和新旧查询交错的两项竞态测试；一项因旧回调减少新会话运行计数而错误自动断开，另一项因旧回调刷新新会话活动时间而未按新会话真实空闲时间断开。
+- 增加卸载状态保护断言后，测试先因旧 `QueryPanel` 完成时触发 React unmounted state update 警告而失败。
+
+绿灯阶段：
+
+- 后端新增测试全部通过。
+- 前端两项 generation 竞态测试和卸载状态保护断言全部通过。
+
+### 定向验证
+
+- 数据库后端：`apps.database.test_policy` 与 `apps.database.test_connections` 共 69 项通过，0 失败；Django system check 无问题。仅有既有 Paramiko/Cryptography TripleDES 弃用警告。
+- 数据库前端：5 个 suites、78 项通过，0 失败。仅有既有 Node.js `punycode` 弃用警告。
+- `git diff --check`：通过。
+- Docker 日志前端的 3 个既有未提交文件未修改、未暂存。
