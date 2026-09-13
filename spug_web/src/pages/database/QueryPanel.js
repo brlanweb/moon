@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Alert, Button, Empty, Space, Table, Tag, Tooltip, message } from 'antd';
+import { Alert, Button, Empty, Modal, Space, Table, Tag, Tooltip, message } from 'antd';
 import {
   CaretRightOutlined,
   ClearOutlined,
@@ -27,8 +27,10 @@ function csvCell(value) {
 
 export default function QueryPanel({connection, activeDatabase, command, onCommandChange, onActivity}) {
   const editorRef = useRef();
+  const runningRef = useRef(false);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState();
+  const [confirmation, setConfirmation] = useState();
   const value = command === undefined ? INITIAL_COMMAND[connection.type] : command;
 
   function changeCommand(nextValue) {
@@ -41,14 +43,38 @@ export default function QueryPanel({connection, activeDatabase, command, onComma
     return selected?.trim() || value?.trim();
   }
 
+  function execute(payload) {
+    if (runningRef.current) return Promise.resolve();
+    runningRef.current = true;
+    setRunning(true);
+    const timeout = Math.max(45000, Number(connection.query_timeout || 0) * 1000 + 5000);
+    return http.post('/api/database/execute/', payload, {timeout})
+      .then(data => {
+        if (data.requires_confirmation) {
+          setConfirmation({
+            payload,
+            token: data.confirmation_token,
+            statementTypes: data.statement_types || [],
+          });
+          return;
+        }
+        setConfirmation(undefined);
+        setResult(data);
+      })
+      .finally(() => {
+        runningRef.current = false;
+        setRunning(false);
+      });
+  }
+
   function run() {
+    if (runningRef.current || confirmation) return;
     if (onActivity) onActivity();
     const statement = selectedCommand();
     if (!statement) {
       message.warning(t('请输入要执行的命令'));
       return;
     }
-    setRunning(true);
     const payload = {
       id: connection.id,
       command: statement,
@@ -56,9 +82,13 @@ export default function QueryPanel({connection, activeDatabase, command, onComma
     if ((connection.type === 'mysql' || connection.type === 'mariadb') && activeDatabase) {
       payload.database = activeDatabase;
     }
-    http.post('/api/database/execute/', payload, {timeout: 45000})
-      .then(setResult)
-      .finally(() => setRunning(false));
+    execute(payload);
+  }
+
+  function confirmExecution() {
+    if (!confirmation || runningRef.current) return;
+    if (onActivity) onActivity();
+    execute({...confirmation.payload, confirmation_token: confirmation.token});
   }
 
   function clear() {
@@ -112,6 +142,8 @@ export default function QueryPanel({connection, activeDatabase, command, onComma
             </div>
           </div>
           <Tag className={styles.engineTag}>{connection.type_alias}</Tag>
+          {connection.environment === 'production' && <Tag color="red">{t('生产')}</Tag>}
+          {connection.read_only && <Tag>{t('只读')}</Tag>}
         </div>
         <Space size={8}>
           <Tooltip title={t('清空编辑器和结果')}>
@@ -203,6 +235,30 @@ export default function QueryPanel({connection, activeDatabase, command, onComma
           </div>
         )}
       </div>
+
+      <Modal
+        open={Boolean(confirmation)}
+        title={t('危险操作确认')}
+        okText={t('确认执行')}
+        cancelText={t('取消')}
+        okButtonProps={{danger: true}}
+        confirmLoading={running}
+        maskClosable={false}
+        onOk={confirmExecution}
+        onCancel={() => !running && setConfirmation(undefined)}>
+        {confirmation && (
+          <div className={styles.confirmationDetails}>
+            <Alert type="error" showIcon message={t('该命令将修改生产环境数据，请确认后执行。')}/>
+            <div><strong>{t('连接')}：</strong>{connection.name}</div>
+            <div><strong>{t('执行数据库')}：</strong>{confirmation.payload.database || connection.database || '-'}</div>
+            <div>
+              <strong>{t('语句类型')}：</strong>
+              {confirmation.statementTypes.map(type => <Tag color="red" key={type}>{type}</Tag>)}
+            </div>
+            <pre className={styles.confirmationSql}>{confirmation.payload.command}</pre>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

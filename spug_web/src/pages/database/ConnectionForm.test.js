@@ -284,3 +284,18 @@ test('keeps advanced validation active after the settings are collapsed again', 
 
   expect(http.post).not.toHaveBeenCalled();
 });
+
+test('lets a configured 120 second connection test finish before the HTTP timeout', async () => {
+  renderForm();
+  act(() => button('高级设置').click());
+  act(() => change('name', '慢连接'));
+  act(() => change('connect_timeout', '120'));
+  act(() => button('测试连接').click());
+  await flush();
+
+  expect(http.post).toHaveBeenCalledWith(
+    '/api/database/connection/check/',
+    expect.objectContaining({connect_timeout: 120}),
+    {timeout: 125000},
+  );
+});

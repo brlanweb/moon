@@ -126,7 +126,9 @@ export default function ConnectionForm({record, visible, onClose, onSaved}) {
     validate().then(data => {
       setTesting(true);
       setTestState(undefined);
-      http.post('/api/database/connection/check/', data)
+      http.post('/api/database/connection/check/', data, {
+        timeout: Math.max(45000, Number(data.connect_timeout) * 1000 + 5000),
+      })
         .then(res => {
           setTestState({success: true, elapsed: res.elapsed});
           message.success(t('连接成功'));

@@ -209,7 +209,10 @@ export default function DatabaseConsole() {
     const generation = nextRequestGeneration(item.id);
     const selectionGeneration = selectionGenerationRef.current[item.id] || 0;
     setConnectingId(item.id);
-    http.get('/api/database/metadata/', {params: {id: item.id}})
+    http.get('/api/database/metadata/', {
+      params: {id: item.id},
+      timeout: Math.max(45000, Number(item.connect_timeout || 0) * 1000 + 5000),
+    })
       .then(data => {
         if (requestGenerationRef.current[item.id] !== generation) return;
         setMetadata(current => ({...current, [item.id]: data}));

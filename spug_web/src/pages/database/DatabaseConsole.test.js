@@ -593,3 +593,13 @@ test('idle timeout zero never disconnects automatically and cleans up the timer'
     info.mockRestore();
   }
 });
+
+test('lets metadata loading honor the configured connection timeout', async () => {
+  await renderConsole([{...CONNECTIONS[0], connect_timeout: 120}]);
+  await openConnection('主库');
+
+  expect(http.get).toHaveBeenCalledWith('/api/database/metadata/', {
+    params: {id: 1},
+    timeout: 125000,
+  });
+});
