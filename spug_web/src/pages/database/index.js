@@ -171,7 +171,6 @@ export default function DatabaseConsole() {
 
   function openConnection(item, refresh = false) {
     if (!item) return;
-    const generation = nextRequestGeneration(item.id);
     const nodeKey = `connection-${item.id}`;
     const activate = () => {
       markActivity(item.id);
@@ -183,6 +182,7 @@ export default function DatabaseConsole() {
       activate();
       return;
     }
+    const generation = nextRequestGeneration(item.id);
     setConnectingId(item.id);
     http.get('/api/database/metadata/', {params: {id: item.id}})
       .then(data => {

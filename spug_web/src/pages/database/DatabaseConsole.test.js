@@ -187,6 +187,28 @@ test('closing a tab keeps metadata cached while disconnecting clears it', async 
   expect(http.get.mock.calls.filter(([url]) => url === '/api/database/metadata/')).toHaveLength(2);
 });
 
+test('cached activation during an in-flight refresh keeps the refresh valid and clears loading', async () => {
+  const refreshRequest = deferred();
+  await renderConsole();
+  http.get.mockImplementationOnce(() => Promise.resolve(METADATA))
+    .mockImplementationOnce(() => refreshRequest.promise);
+  await openConnection('主库');
+
+  act(() => findText('button', '刷新目录').click());
+  act(() => findText('.ant-tree-title', '主库').closest('.ant-tree-node-content-wrapper').click());
+  expect(http.get.mock.calls.filter(([url]) => url === '/api/database/metadata/')).toHaveLength(2);
+
+  await act(async () => {
+    refreshRequest.resolve({groups: [{name: 'refreshed', items: ['new_table']}], truncated: false});
+    await Promise.resolve();
+  });
+  await flush();
+
+  expect(findText('.ant-tree-title', 'refreshed')).not.toBeUndefined();
+  expect(findText('.ant-tree-title', 'public')).toBeUndefined();
+  expect(document.querySelector('.ant-spin-spinning')).toBeNull();
+});
+
 test('manual disconnect invalidates pending metadata before a new explicit open', async () => {
   const staleRequest = deferred();
   const freshRequest = deferred();
