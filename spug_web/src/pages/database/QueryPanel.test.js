@@ -29,7 +29,7 @@ const PRODUCTION_CONNECTION = {
   host: 'db.example.com',
   port: 3306,
   environment: 'production',
-  read_only: true,
+  read_only: false,
   query_timeout: 120,
 };
 
@@ -89,6 +89,7 @@ test('shows a dangerous production confirmation without treating the challenge a
     requires_confirmation: true,
     confirmation_token: 'signed-token',
     statement_types: ['UPDATE'],
+    execution_database: 'backend_default',
   });
   renderPanel();
 
@@ -104,7 +105,8 @@ test('shows a dangerous production confirmation without treating the challenge a
   const modal = document.querySelector('.ant-modal');
   expect(modal).not.toBeNull();
   expect(modal.textContent).toContain('生产订单库');
-  expect(modal.textContent).toContain('tenant_42');
+  expect(modal.textContent).toContain('backend_default');
+  expect(modal.textContent).not.toContain('执行数据库：tenant_42');
   expect(modal.textContent).toContain('UPDATE');
   expect(modal.querySelector('pre').textContent).toBe("UPDATE orders SET status = 'paid' WHERE id = 42;");
   expect(document.body.textContent).toContain('运行命令后在这里查看结果');
@@ -172,7 +174,7 @@ test('shows loading while executing and ignores another click', async () => {
 });
 
 test('shows production and read-only tags but omits them for a normal writable connection', () => {
-  renderPanel();
+  renderPanel({connection: {...PRODUCTION_CONNECTION, read_only: true}});
   const tags = Array.from(root.querySelectorAll('.ant-tag'));
   expect(tags.find(tag => tag.textContent === '生产').classList.contains('ant-tag-red')).toBe(true);
   expect(tags.some(tag => tag.textContent === '只读')).toBe(true);
@@ -189,6 +191,19 @@ test('shows production and read-only tags but omits them for a normal writable c
   });
   expect(Array.from(root.querySelectorAll('.ant-tag')).map(tag => tag.textContent))
     .toEqual(['MySQL']);
+});
+
+test.each([1, undefined])('keeps the legacy request timeout floor for query_timeout=%s', async queryTimeout => {
+  http.post.mockResolvedValue({columns: ['value'], rows: [[1]], affected: 0, elapsed: 2});
+  renderPanel({
+    connection: {...PRODUCTION_CONNECTION, environment: 'normal', query_timeout: queryTimeout},
+    command: 'SELECT 1;',
+  });
+
+  act(() => button('运行').click());
+  await flush();
+
+  expect(http.post).toHaveBeenCalledWith('/api/database/execute/', expect.any(Object), {timeout: 45000});
 });
 
 test('keeps rendering ordinary query responses', async () => {

@@ -594,6 +594,16 @@ test('idle timeout zero never disconnects automatically and cleans up the timer'
   }
 });
 
+test.each([1, undefined])('keeps the legacy metadata timeout floor for connect_timeout=%s', async connectTimeout => {
+  await renderConsole([{...CONNECTIONS[0], connect_timeout: connectTimeout}]);
+  await openConnection('主库');
+
+  expect(http.get).toHaveBeenCalledWith('/api/database/metadata/', {
+    params: {id: 1},
+    timeout: 45000,
+  });
+});
+
 test('lets metadata loading honor the configured connection timeout', async () => {
   await renderConsole([{...CONNECTIONS[0], connect_timeout: 120}]);
   await openConnection('主库');

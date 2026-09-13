@@ -55,6 +55,7 @@ export default function QueryPanel({connection, activeDatabase, command, onComma
             payload,
             token: data.confirmation_token,
             statementTypes: data.statement_types || [],
+            executionDatabase: data.execution_database,
           });
           return;
         }
@@ -250,7 +251,7 @@ export default function QueryPanel({connection, activeDatabase, command, onComma
           <div className={styles.confirmationDetails}>
             <Alert type="error" showIcon message={t('该命令将修改生产环境数据，请确认后执行。')}/>
             <div><strong>{t('连接')}：</strong>{connection.name}</div>
-            <div><strong>{t('执行数据库')}：</strong>{confirmation.payload.database || connection.database || '-'}</div>
+            <div><strong>{t('执行数据库')}：</strong>{confirmation.executionDatabase || '-'}</div>
             <div>
               <strong>{t('语句类型')}：</strong>
               {confirmation.statementTypes.map(type => <Tag color="red" key={type}>{type}</Tag>)}

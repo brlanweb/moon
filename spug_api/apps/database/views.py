@@ -7,6 +7,19 @@ from apps.database.models import DatabaseConnection
 from apps.database.policy import PolicyViolation, enforce_command_policy
 
 
+_DEFAULT_DATABASES = {
+    'postgresql': 'postgres',
+    'clickhouse': 'default',
+    'redis': '0',
+}
+
+
+def _execution_database(connection, request_database=None):
+    if request_database is not None:
+        return request_database
+    return connection.database or _DEFAULT_DATABASES.get(connection.type, '')
+
+
 class _StrictInteger(int):
     def __new__(cls, value):
         if isinstance(value, (bool, float)):
@@ -158,7 +171,7 @@ def run_command(request):
         if not isinstance(form.database, str) or not 0 < len(form.database.strip()) <= 128:
             return json_response(error='数据库名称必须为 1～128 个非空白字符')
         request_database = form.database.strip()
-    execution_database = request_database if request_database is not None else item.database
+    execution_database = _execution_database(item, request_database)
     try:
         decision = enforce_command_policy(
             item,
@@ -172,6 +185,7 @@ def run_command(request):
                 'requires_confirmation': True,
                 'confirmation_token': decision.confirmation_token,
                 'statement_types': list(decision.statement_types),
+                'execution_database': execution_database,
             })
         return json_response(execute(
             item, form.command, database=request_database,

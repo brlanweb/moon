@@ -300,6 +300,28 @@ class RunCommandPolicyTests(SimpleTestCase):
         self.assertIs(payload['data']['requires_confirmation'], True)
         self.assertTrue(payload['data']['confirmation_token'])
         self.assertEqual(payload['data']['statement_types'], ['UPDATE'])
+        self.assertEqual(payload['data']['execution_database'], 'operations')
+        execute_command.assert_not_called()
+
+    @patch('apps.database.views.execute')
+    @patch('apps.database.views.DatabaseConnection.objects.filter')
+    def test_production_challenge_reports_driver_default_database(
+            self, connections, execute_command):
+        cases = (
+            ('postgresql', '', 'UPDATE users SET active = 1', 'postgres'),
+            ('clickhouse', '', 'INSERT INTO events VALUES (1)', 'default'),
+            ('redis', '', 'SET key value', '0'),
+        )
+        for database_type, database, command, expected in cases:
+            with self.subTest(database_type=database_type):
+                self.connection.type = database_type
+                self.connection.database = database
+                connections.return_value.first.return_value = self.connection
+
+                payload = json.loads(run_command(self.request(command)).content)
+
+                self.assertFalse(payload['error'])
+                self.assertEqual(payload['data']['execution_database'], expected)
         execute_command.assert_not_called()
 
     @patch('apps.database.views.execute', return_value={'rows': [], 'affected': 1})

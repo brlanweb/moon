@@ -285,6 +285,27 @@ test('keeps advanced validation active after the settings are collapsed again', 
   expect(http.post).not.toHaveBeenCalled();
 });
 
+test.each([1, undefined])('keeps the legacy HTTP timeout floor for connect_timeout=%s', async connectTimeout => {
+  const record = connectTimeout === undefined ? {} : {
+    id: 9,
+    name: '快速连接',
+    type: 'mysql',
+    host: '127.0.0.1',
+    port: 3306,
+    connect_timeout: connectTimeout,
+  };
+  renderForm(record);
+  if (!record.id) act(() => change('name', '快速连接'));
+  act(() => button('测试连接').click());
+  await flush();
+
+  expect(http.post).toHaveBeenCalledWith(
+    '/api/database/connection/check/',
+    expect.any(Object),
+    {timeout: 45000},
+  );
+});
+
 test('lets a configured 120 second connection test finish before the HTTP timeout', async () => {
   renderForm();
   act(() => button('高级设置').click());
