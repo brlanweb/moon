@@ -106,3 +106,85 @@ Redis EVAL/FCALL/SCRIPT/FUNCTION 等不能精确取消的命令，返回 `cancel
 4. 无新增数据库迁移，但按现有部署规范再次执行迁移检查。仅在主代理授权部署流程中进行服务 reload/restart。
 5. 非生产验收停止/失败/unsupported、双击展开、下拉同步、PG schema、生产确认锁定、断开清理及 idle。生产环境不以慢查询做验收。
 6. 如需回滚，回到基线或回滚实现提交，并同步恢复前后端；进行中的执行先等待或安全取消，避免把仍在运行的请求当作已结束。
+
+
+## 2026-09-13：两项 Important 审查修复
+
+### 提交与范围
+
+- 本轮起点：`57a184517029f7c28934a2eaac721143b48fba2c`；起始工作区干净。
+- 修复及回归测试提交：`2a6fd37eeea3550578c069185f889344accaaab6`，`fix(database): keep cancellation reachable and distinguish preflight rejection`。
+- 本节作为后续报告提交追加；最终报告提交 SHA 由 `git log -1 -- .superpowers/native-query-cancel-report.md` 查询。
+- 先阅读 QueryPanel、views、executions、公共 HTTP 封装、原报告及现有测试，再补红灯测试；实现仅改 QueryPanel、数据库 views 和公共 HTTP 的显式 opt-in 分支。未修改全局认证装饰器、其他页面生产代码、模型或迁移。
+- 已提交；未推送、未部署、未重启服务。临时浏览器验收服务器已停止，已调用浏览器关闭工具。
+
+### Important 1：确认弹窗遮挡停止
+
+根因：确认执行仅追加 token 后调用 execute，confirmation 状态一直保留到成功结果。运行中不能取消弹窗，网络丢失/unknown 又不会关闭弹窗，导致下面的停止按钮虽然存在，却被 Modal 遮罩拦截真实指针事件。
+
+修复：点击“确认执行”时先保存原 payload 与 token，再关闭确认展示；execute 保存冻结的请求副本。execution_id、SQL、database/schema、token 均保持本轮快照，后续父组件更新不能改写已确认的请求。查询进入 unknown 或网络恢复时重置停止按钮的等待状态，保留运行锁，允许再次停止。服务端未知结果继续记录可重试的取消失败反馈；注册表故障不能把 unknown 变成 failed/not_started。
+
+可达性证据不是只调用 DOM `.click()`：使用真实 Chromium、真实 QueryPanel/Ant Design/CSS/公共 HTTP，隔离测试页仅替换编辑器、权限入口和 HTTP 网络端点。
+
+- 基线 `57a1845`：确认执行后 dialog 仍显示；`elementFromPoint` 表明停止按钮被覆盖；Playwright `click(trial=true)` 超时并报告遮罩 `intercepts pointer events`。`stopCovered=true, realClickBlockedByOverlay=true`。
+- 修复版分别验证服务端 `unknown` 与真实浏览器 `route.abort('failed')` 网络失败：确认后 dialog 隐藏，停止按钮命中测试通过；每个场景实际点击停止 **2 次**（第一次控制失败，第二次重试），最终 `cancelled`；两次执行请求的 execution_id/命令/database/token 快照校验通过。
+- 点击均由 Playwright 正常交互完成，没有 force 点击、没有移除遮罩、没有用 JavaScript 直接触发按钮事件替代真实点击。
+
+### Important 2：明确执行前拒绝被错误恢复轮询
+
+根因：权限/连接/参数等分支返回 `{data:'', error:'...'}`，公共 HTTP 将其拒绝为字符串；QueryPanel 将全部 rejection 当成可能已执行，开始查询尚未登记的 execution_id，状态返回空对象后永久重试。
+
+新协议与边界：
+
+| 情况 | 服务端/HTTP 识别 | 前端行为 |
+| --- | --- | --- |
+| execute 的明确前置拒绝 | 保留旧 error 信封，增加 `execution_status=not_started` | 显示错误、解锁、零状态轮询 |
+| 成功信封中的 `data.status=not_started` | 同样作为确定未启动 | 错误展示、解锁、不轮询 |
+| 认证/网关明确拒绝 | execute 的 HTTP 400/401/403/404/405/413/415/422/429 | 解锁、不轮询；保留既有 401 登录跳转 |
+| 真实传输结果未知 | opt-in HTTP 的 `networkUncertain`，或服务端 `status=unknown` | 保守锁定并恢复状态轮询；仅确认 completed/cancelled/failed 后释放 |
+| cancel/status 被明确拒绝 | `execution_status=unavailable` 或确定 HTTP 错误 | 终止自动查询、保留未知执行锁、允许手动停止重试/管理员核实 |
+| 畸形响应/未分类服务端异常 | 不标记为网络异常或 not_started | 停止自动恢复、保持锁定，不能宣称已结束 |
+
+数据库专用装饰器统一覆盖权限装饰器拒绝、连接查看权限、非法 JSON 顶层/语法、参数校验、连接不存在、执行 ID、只读/确认策略、注册失败等明确错误。前置检查与 execute 调用分开，确认 token 存储故障也能确定业务命令未发送；dispatch 之后的注册表/连接故障不会误标 not_started。
+
+公共 HTTP 仅对 `executionProtocol: true` 请求提供结构化 rejection；普通页面继续得到原有字符串错误、原有成功数据和登录跳转。没有用错误文案或语言翻译猜测是否执行。旧客户端不带 execution_id 时，执行失败继续返回 error 信封，标记 failed 而非 not_started。
+
+### TDD 与最终验证
+
+红灯记录（本机忽略的日志保留）：
+
+- `native-review-frontend-red.log`：真实 Axios/公共响应拦截链下 **10 项失败、2 项通过**；覆盖未解锁、弹窗仍遮挡、状态拒绝后多发查询。最初测试导入路径错误已先修正，再取得这些行为红灯。
+- `native-review-backend-red.log`：前置分支缺失协议标识，并暴露非对象 JSON、非字符串/空白命令等异常分支。
+- `native-review-retry-red.log`：停止中的执行变成 network/unknown 后不能重试停止，**2 项失败**。
+- `native-review-preflight-red.log`：前置确认存储故障缺少 not_started、未知执行缺少可重试取消反馈，**2 项断言失败**。
+- `native-review-malformed-red.log`：畸形 execute/status 响应被当成网络未知，**3 项失败**。
+- `native-review-http-red.log` 和 `native-review-legacy-backend-red.log`：公共 HTTP 网络错误字符串契约及旧客户端错误信封兼容性红灯；均在提交前修复并回归。
+
+最终结果：
+
+1. **数据库后端 104 项通过，0 跳过**，包括 **5 项本地原生取消集成**：MariaDB SLEEP、Redis XREAD BLOCK、独立 cancel API 用户隔离、提前取消与重放拒绝、取消一个物理查询不影响另一用户查询。
+   ```sh
+   docker exec -e NATIVE_CANCEL_INTEGRATION=1 -w /data/spug/spug_api spug4 python3 manage.py test apps.database.test_connections apps.database.test_policy apps.database.test_executions apps.database.test_execution_protocol --noinput
+   ```
+   输出 `Found 104 test(s)` / `Ran 104 tests` / `OK`。仍使用既有本地 Compose 数据库，集成构造器断言数据库 HOST 为 db；未访问生产数据库。
+2. **数据库前端 6 套件 / 117 项通过**：
+   ```sh
+   cd spug_web
+   CI=true npm test -- --watch=false --runInBand src/pages/database
+   ```
+3. 公共 HTTP 改动额外跑 **全部前端 25 套件 / 258 项，全部通过**：
+   ```sh
+   cd spug_web
+   CI=true npm test -- --watch=false --runInBand
+   ```
+   新协议测试使用真实 Axios、真实公共拦截器和真实 React/Modal，仅在 HTTP adapter 边界提供完整响应/网络故障。保留全套运行中既有的 Node 弃用及其他页面 React act 警告，不将其描述成无警告运行。
+4. **真实浏览器**补验：上述两个 unknown/network 场景正常停止与重试；首次 execute 被 not_started 拒绝时 `executeRequests=1,statusRequests=0,unlocked=true`；生产确认后被拒绝时 `executeRequests=2,statusRequests=0,unlocked=true`。状态明确拒绝场景仅 **1 次 GET**，等待超过两个轮询间隔后不再自动发请求，同时 `unknownExecutionLocked=true`。
+5. **隔离生产构建成功**，输出到 `.superpowers/native-review-build`，main bundle 为 `main.eec862f8.chunk.js`：
+   ```sh
+   cd spug_web
+   npm run build -- --config-overrides ../.superpowers/native-review-build-overrides.cjs
+   ```
+   覆盖脚本复用原 config-overrides，仅设置 paths.appBuild。构建前后运行静态目录 **26 个文件**的文件集合和 SHA-256 全部一致；没有把新构建产物复制到服务目录。
+6. `git diff --check`、暂存区 `git diff --cached --check` 均通过。
+
+浏览器隔离夹具、基线构建和本机日志位于 `.superpowers/native-review-browser` 与 `.superpowers/native-review-*.log`，属于本机忽略的验收产物；可持续回归的前后端测试已随修复提交。浏览器测试的网络端点为受控响应，与上述真实 MariaDB/Redis 集成分开验证，不冒称全链路生产环境测试。PostgreSQL/ClickHouse 的真实实例验收限制沿用原报告。本轮完成修复者自审与上述自动化/浏览器核验；当前子代理环境不支持再派遣独立审查代理，没有声称完成独立复审。
