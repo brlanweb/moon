@@ -67,3 +67,41 @@
 
 - 测试启动时 Paramiko 会输出上游 `TripleDES` 弃用警告，不影响本任务测试结果。
 - 本地未配置生产模式所需的 `SPUG_SECRET_KEY`，因此测试使用 `SPUG_DEBUG=true` 启动；签名测试仍使用 Django 测试配置中的 `SECRET_KEY` 完成真实签名与过期校验。
+
+## 安全审查修复（2026-09-13）
+
+### 修复内容
+
+- PostgreSQL `COPY` 仅将 `COPY ... TO STDOUT` 视为只读；`COPY ... FROM` 和 `COPY ... TO <文件>` 均分类为数据变更，生产环境必须确认，只读连接拒绝。
+- `COPY ... TO PROGRAM` 超出数据库终端的数据操作边界，裁定为所有环境直接拒绝，确认令牌也不能放行。
+- PostgreSQL `SELECT ... INTO` 以及 MySQL `SELECT ... INTO OUTFILE/DUMPFILE` 均分类为非只读数据变更。
+- Redis `EVAL`、`EVALSHA`、`FCALL` 明确按潜在写命令处理；未知命令和未知模块命令在生产环境必须确认，在只读连接上拒绝。
+- MySQL `/*! ... */` 可执行注释不再被普通注释逻辑忽略；由于未展开其中 SQL，包含此类注释的命令保守标记为非只读、数据变更且未知。
+- 策略运行时实际使用 `known` 状态：只读连接拒绝未知或非只读命令；生产连接仅直接放行已知且可证明只读的命令。普通非只读连接继续直接放行未知 SQL 和 Redis 命令。
+
+### TDD 证据
+
+1. 先补充 8 组策略对抗测试和 2 项 API 对抗测试。
+2. 策略测试首次运行 25 项中出现 16 个预期失败，覆盖 `COPY` 服务端副作用、`SELECT INTO`、MySQL 可执行注释、生产未知命令与 Redis 动态执行命令。
+3. API 对抗测试在实现前确认生产未知 Redis 命令仍进入执行分支，且 `COPY TO PROGRAM` 未被拒绝。
+4. 完成最小策略修复后，`apps.database.test_policy` 25 项通过，`apps.database.test_connections` 24 项通过。
+
+### 自审
+
+- 逐条复核 2 个 Critical SQL 绕过、1 个 Critical Redis 绕过、MySQL 可执行注释、对抗测试和 `known` 封闭策略，未发现遗漏项。
+- 确认生产环境的封闭条件为 `known and read_only`；其余命令进入确认流程，`COPY TO PROGRAM` 例外为无条件拒绝。
+- 确认普通非只读连接兼容性未收紧，未知 SQL/Redis 命令仍直接执行。
+- 确认 API 在挑战或拒绝路径均不会调用数据库执行函数。
+- 确认本次后端差异未包含或改动 Docker 前端工作区文件。
+
+### 验证
+
+- `SPUG_DEBUG=true ./venv/bin/python manage.py test apps.database.test_policy -v 2`：25 项通过。
+- `SPUG_DEBUG=true ./venv/bin/python manage.py test apps.database.test_connections -v 2`：24 项通过。
+- `./venv/bin/python -m py_compile apps/database/policy.py apps/database/test_policy.py apps/database/test_connections.py`：通过。
+- `git diff --check`：通过。
+
+### 余留疑虑
+
+- Paramiko 仍输出上游 `TripleDES` 弃用警告，与本次策略修复无关。
+- SQL 分类依赖 `sqlparse` 的词法结果，因此生产环境对任何未知或不能证明只读的语句统一要求确认；这是有意的保守策略。

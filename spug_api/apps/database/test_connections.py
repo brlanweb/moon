@@ -305,3 +305,33 @@ class RunCommandPolicyTests(SimpleTestCase):
         payload = json.loads(response.content)
         self.assertIn('只读连接', payload['error'])
         execute_command.assert_not_called()
+
+    @patch('apps.database.views.execute', return_value={})
+    @patch('apps.database.views.DatabaseConnection.objects.filter')
+    def test_production_unknown_redis_command_returns_challenge_without_executing(
+            self, connections, execute_command):
+        self.connection.type = 'redis'
+        connections.return_value.first.return_value = self.connection
+
+        response = run_command(self.request('JSON.SET profile $ {}'))
+
+        payload = json.loads(response.content)
+        self.assertFalse(payload['error'])
+        self.assertIn('requires_confirmation', payload['data'])
+        self.assertIs(payload['data']['requires_confirmation'], True)
+        execute_command.assert_not_called()
+
+    @patch('apps.database.views.execute', return_value={})
+    @patch('apps.database.views.DatabaseConnection.objects.filter')
+    def test_copy_to_program_is_rejected_without_executing(
+            self, connections, execute_command):
+        self.connection.type = 'postgresql'
+        self.connection.environment = 'normal'
+        connections.return_value.first.return_value = self.connection
+
+        response = run_command(
+            self.request("COPY users TO PROGRAM 'gzip > /tmp/users.gz'"))
+
+        payload = json.loads(response.content)
+        self.assertIn('COPY TO PROGRAM', payload['error'])
+        execute_command.assert_not_called()

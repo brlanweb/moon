@@ -36,7 +36,8 @@ _REDIS_READ_COMMANDS = {
 _REDIS_WRITE_COMMANDS = {
     'APPEND', 'BITFIELD', 'BITOP', 'BLMOVE', 'BLMPOP', 'BLPOP', 'BRPOP',
     'BRPOPLPUSH', 'BZPOPMAX', 'BZPOPMIN', 'COPY', 'DECR', 'DECRBY', 'DEL',
-    'EXPIRE', 'EXPIREAT', 'FLUSHALL', 'FLUSHDB', 'GEOADD', 'GETDEL',
+    'EVAL', 'EVALSHA', 'EXPIRE', 'EXPIREAT', 'FCALL', 'FLUSHALL', 'FLUSHDB',
+    'GEOADD', 'GETDEL',
     'GETEX', 'GETSET', 'HDEL', 'HINCRBY', 'HINCRBYFLOAT', 'HMSET', 'HSET',
     'HSETNX', 'INCR', 'INCRBY', 'INCRBYFLOAT', 'LINSERT', 'LMOVE', 'LMPOP',
     'LPOP', 'LPUSH', 'LPUSHX', 'LREM', 'LSET', 'LTRIM', 'MIGRATE', 'MSET',
@@ -93,6 +94,23 @@ def _top_level_words(statement):
     ]
 
 
+def _copy_target(words):
+    if not words or words[0] != 'COPY':
+        return None
+    try:
+        target_index = words.index('TO') + 1
+    except ValueError:
+        return None
+    return words[target_index] if target_index < len(words) else None
+
+
+def _has_mysql_executable_comment(statement):
+    return any(
+        token.ttype in T.Comment and token.value.lstrip().startswith('/*!')
+        for token in statement.flatten()
+    )
+
+
 def _classify_sql_statement(statement):
     tokens = _meaningful_tokens(statement)
     if not tokens:
@@ -103,10 +121,9 @@ def _classify_sql_statement(statement):
     statement_type = parsed_type if parsed_type != 'UNKNOWN' else words[0]
 
     if statement_type == 'COPY':
-        top_level_words = _top_level_words(statement)
-        is_write = 'FROM' in top_level_words
-        is_read = 'TO' in top_level_words and not is_write
-        return statement_type, is_read, is_write, is_read or is_write
+        target = _copy_target(_top_level_words(statement))
+        is_read = target == 'STDOUT'
+        return statement_type, is_read, not is_read, True
 
     mutation_tokens = {
         token.value.upper()
@@ -118,7 +135,11 @@ def _classify_sql_statement(statement):
     if words[0] == 'EXPLAIN' and 'ANALYZE' not in words:
         mutation_tokens.clear()
 
-    has_data_change = statement_type in _SQL_DATA_CHANGE_TYPES or bool(mutation_tokens)
+    has_data_change = (
+        statement_type in _SQL_DATA_CHANGE_TYPES
+        or bool(mutation_tokens)
+        or (statement_type == 'SELECT' and 'INTO' in words)
+    )
     read_only = statement_type in _SQL_READ_TYPES and not has_data_change
     known = (
         statement_type in _SQL_READ_TYPES
@@ -129,9 +150,15 @@ def _classify_sql_statement(statement):
     return statement_type, read_only, has_data_change, known
 
 
-def _classify_sql(command):
+def _classify_sql(database_type, command):
+    parsed_statements = sqlparse.parse(command)
+    has_executable_comment = (
+        database_type == 'mysql'
+        and any(_has_mysql_executable_comment(statement)
+                for statement in parsed_statements)
+    )
     statements = []
-    for statement in sqlparse.parse(command):
+    for statement in parsed_statements:
         classified = _classify_sql_statement(statement)
         if classified[0] != 'UNKNOWN' or _meaningful_tokens(statement):
             statements.append(classified)
@@ -139,9 +166,9 @@ def _classify_sql(command):
         statements.append(('UNKNOWN', False, False, False))
     return CommandClassification(
         statement_types=tuple(item[0] for item in statements),
-        read_only=all(item[1] for item in statements),
-        has_data_change=any(item[2] for item in statements),
-        known=all(item[3] for item in statements),
+        read_only=not has_executable_comment and all(item[1] for item in statements),
+        has_data_change=has_executable_comment or any(item[2] for item in statements),
+        known=not has_executable_comment and all(item[3] for item in statements),
     )
 
 
@@ -171,7 +198,16 @@ def _classify_redis(command):
 def classify_command(database_type, command):
     if database_type == 'redis':
         return _classify_redis(command)
-    return _classify_sql(command)
+    return _classify_sql(database_type, command)
+
+
+def _is_copy_to_program(database_type, command):
+    if database_type != 'postgresql':
+        return False
+    return any(
+        _copy_target(_top_level_words(statement)) == 'PROGRAM'
+        for statement in sqlparse.parse(command)
+    )
 
 
 def _confirmation_payload(user_id, connection_id, command):
@@ -205,11 +241,15 @@ def _validate_confirmation_token(token, user_id, connection_id, command):
 
 def enforce_command_policy(connection, user_id, command, confirmation_token=None):
     classification = classify_command(connection.type, command)
-    if connection.read_only and not classification.read_only:
+    if _is_copy_to_program(connection.type, command):
+        raise PolicyViolation('不允许执行 COPY TO PROGRAM')
+    if connection.read_only and (
+            not classification.known or not classification.read_only):
         raise PolicyViolation('只读连接不允许执行该命令')
 
     requires_confirmation = (
-        connection.environment == 'production' and classification.has_data_change
+        connection.environment == 'production'
+        and (not classification.known or not classification.read_only)
     )
     if not requires_confirmation:
         return PolicyDecision(classification.statement_types)

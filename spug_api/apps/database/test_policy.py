@@ -41,19 +41,48 @@ class SqlClassificationTests(SimpleTestCase):
         self.assertIs(result.read_only, False)
         self.assertIs(result.has_data_change, True)
 
-    def test_copy_direction_distinguishes_read_from_write(self):
-        reads = (
-            classify_command('postgresql', 'COPY users TO STDOUT'),
-            classify_command(
-                'postgresql', 'COPY (SELECT * FROM users) TO STDOUT'),
-        )
-        write = classify_command('postgresql', 'COPY users FROM STDIN')
+    def test_only_copy_to_stdout_is_read_only(self):
+        for command in (
+                'COPY users TO STDOUT',
+                'COPY (SELECT * FROM users) TO STDOUT'):
+            with self.subTest(command=command):
+                result = classify_command('postgresql', command)
 
-        for read in reads:
-            self.assertIs(read.read_only, True)
-            self.assertIs(read.has_data_change, False)
-        self.assertIs(write.read_only, False)
-        self.assertIs(write.has_data_change, True)
+                self.assertIs(result.read_only, True)
+                self.assertIs(result.has_data_change, False)
+
+    def test_copy_with_server_side_effect_is_data_change(self):
+        for command in (
+                'COPY users FROM STDIN',
+                "COPY users TO '/tmp/users.csv'",
+                "COPY users TO PROGRAM 'gzip > /tmp/users.gz'"):
+            with self.subTest(command=command):
+                result = classify_command('postgresql', command)
+
+                self.assertIs(result.read_only, False)
+                self.assertIs(result.has_data_change, True)
+
+    def test_select_into_forms_are_data_changes(self):
+        for database_type, command in (
+                ('postgresql', 'SELECT * INTO archived_users FROM users'),
+                ('mysql', "SELECT * FROM users INTO OUTFILE '/tmp/users.csv'"),
+                ('mysql', "SELECT * FROM users INTO DUMPFILE '/tmp/users.bin'")):
+            with self.subTest(database_type=database_type, command=command):
+                result = classify_command(database_type, command)
+
+                self.assertIs(result.read_only, False)
+                self.assertIs(result.has_data_change, True)
+
+    def test_mysql_executable_comment_is_conservatively_a_data_change(self):
+        for command in (
+                '/*!40101 DELETE FROM users */',
+                'SELECT 1; /*!50000 DROP TABLE users */'):
+            with self.subTest(command=command):
+                result = classify_command('mysql', command)
+
+                self.assertIs(result.read_only, False)
+                self.assertIs(result.has_data_change, True)
+                self.assertIs(result.known, False)
 
 
 class RedisClassificationTests(SimpleTestCase):
@@ -111,10 +140,76 @@ class CommandPolicyTests(SimpleTestCase):
             enforce_command_policy(
                 self.connection(type='redis', read_only=True), 7, 'FUTURE.READ key')
 
-    def test_normal_connection_allows_unknown_command(self):
-        decision = enforce_command_policy(self.connection(), 7, 'VACUUM users')
+    def test_normal_connection_allows_unknown_sql_and_redis_commands(self):
+        commands = (
+            (self.connection(), 'FUTURE COMMAND'),
+            (self.connection(type='redis'), 'JSON.FUTURE key value'),
+        )
 
-        self.assertIs(decision.requires_confirmation, False)
+        for connection, command in commands:
+            with self.subTest(database_type=connection.type, command=command):
+                decision = enforce_command_policy(connection, 7, command)
+
+                self.assertIs(decision.requires_confirmation, False)
+
+    def test_production_unknown_command_requires_confirmation(self):
+        commands = (
+            (self.connection(environment='production'), 'FUTURE COMMAND'),
+            (self.connection(type='redis', environment='production'), 'JSON.FUTURE key value'),
+        )
+
+        for connection, command in commands:
+            with self.subTest(database_type=connection.type, command=command):
+                decision = enforce_command_policy(connection, 7, command)
+
+                self.assertIs(decision.requires_confirmation, True)
+                self.assertTrue(decision.confirmation_token)
+
+    def test_production_potentially_mutating_redis_commands_require_confirmation(self):
+        connection = self.connection(type='redis', environment='production')
+
+        for command in (
+                'EVAL "return redis.call(\'SET\', KEYS[1], ARGV[1])" 1 key value',
+                'EVALSHA abcdef 1 key',
+                'FCALL library.function 1 key',
+                'JSON.SET profile $ {}'):
+            with self.subTest(command=command):
+                decision = enforce_command_policy(connection, 7, command)
+
+                self.assertIs(decision.requires_confirmation, True)
+
+    def test_read_only_connection_rejects_potentially_mutating_redis_commands(self):
+        connection = self.connection(type='redis', read_only=True)
+
+        for command in (
+                'EVAL "return 1" 0',
+                'EVALSHA abcdef 0',
+                'FCALL library.function 0',
+                'JSON.SET profile $ {}'):
+            with self.subTest(command=command):
+                with self.assertRaisesRegex(PolicyViolation, '只读连接'):
+                    enforce_command_policy(connection, 7, command)
+
+    def test_copy_to_program_is_rejected_in_every_environment(self):
+        command = "COPY users TO PROGRAM 'gzip > /tmp/users.gz'"
+
+        for environment in ('normal', 'production'):
+            with self.subTest(environment=environment):
+                with self.assertRaisesRegex(PolicyViolation, 'COPY TO PROGRAM'):
+                    enforce_command_policy(
+                        self.connection(type='postgresql', environment=environment),
+                        7,
+                        command,
+                    )
+
+    def test_production_copy_to_file_requires_confirmation(self):
+        decision = enforce_command_policy(
+            self.connection(type='postgresql', environment='production'),
+            7,
+            "COPY users TO '/tmp/users.csv'",
+        )
+
+        self.assertIs(decision.requires_confirmation, True)
 
     def test_production_read_does_not_require_confirmation(self):
         decision = enforce_command_policy(
