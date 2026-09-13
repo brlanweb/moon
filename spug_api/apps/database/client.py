@@ -43,37 +43,55 @@ def _mysql(connection, database=None):
 
     ssl = {} if connection.use_ssl else None
     selected_database = connection.database if database is None else database
-    return pymysql.connect(
-        host=connection.host, port=connection.port,
-        user=connection.username or None, password=connection.get_password(),
-        database=selected_database or None, charset='utf8mb4', autocommit=True,
-        connect_timeout=connection.connect_timeout, read_timeout=connection.query_timeout,
-        write_timeout=connection.query_timeout, ssl=ssl,
-    )
+    options = {
+        'host': connection.host,
+        'port': connection.port,
+        'user': connection.username or None,
+        'password': connection.get_password(),
+        'database': selected_database or None,
+        'charset': 'utf8mb4',
+        'autocommit': True,
+        'connect_timeout': connection.connect_timeout,
+        'read_timeout': connection.query_timeout,
+        'write_timeout': connection.query_timeout,
+        'ssl': ssl,
+    }
+    if connection.read_only:
+        options['init_command'] = 'SET SESSION TRANSACTION READ ONLY'
+    return pymysql.connect(**options)
 
 
 def _postgresql(connection):
     import psycopg
 
+    options = f'-c statement_timeout={connection.query_timeout * 1000}'
+    if connection.read_only:
+        options += ' -c default_transaction_read_only=on'
     return psycopg.connect(
         host=connection.host, port=connection.port,
         user=connection.username or None, password=connection.get_password() or None,
         dbname=connection.database or 'postgres', connect_timeout=connection.connect_timeout,
         sslmode='require' if connection.use_ssl else 'prefer',
-        options=f'-c statement_timeout={connection.query_timeout * 1000}', autocommit=True,
+        options=options, autocommit=True,
     )
 
 
 def _clickhouse(connection):
     import clickhouse_connect
 
-    return clickhouse_connect.get_client(
-        host=connection.host, port=connection.port,
-        username=connection.username or 'default', password=connection.get_password(),
-        database=connection.database or 'default', secure=connection.use_ssl,
-        connect_timeout=connection.connect_timeout,
-        send_receive_timeout=connection.query_timeout,
-    )
+    options = {
+        'host': connection.host,
+        'port': connection.port,
+        'username': connection.username or 'default',
+        'password': connection.get_password(),
+        'database': connection.database or 'default',
+        'secure': connection.use_ssl,
+        'connect_timeout': connection.connect_timeout,
+        'send_receive_timeout': connection.query_timeout,
+    }
+    if connection.read_only:
+        options['settings'] = {'readonly': 1}
+    return clickhouse_connect.get_client(**options)
 
 
 def _redis(connection):

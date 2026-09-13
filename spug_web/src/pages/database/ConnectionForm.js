@@ -127,7 +127,10 @@ export default function ConnectionForm({record, visible, onClose, onSaved}) {
       setTesting(true);
       setTestState(undefined);
       http.post('/api/database/connection/check/', data, {
-        timeout: Math.max(45000, Number(data.connect_timeout) * 1000 + 5000),
+        timeout: Math.max(
+          45000,
+          (Number(data.connect_timeout) + Number(data.query_timeout)) * 1000 + 5000,
+        ),
       })
         .then(res => {
           setTestState({success: true, elapsed: res.elapsed});

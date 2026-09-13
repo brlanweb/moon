@@ -306,17 +306,18 @@ test.each([1, undefined])('keeps the legacy HTTP timeout floor for connect_timeo
   );
 });
 
-test('lets a configured 120 second connection test finish before the HTTP timeout', async () => {
+test('lets a high combined connection and query timeout finish before the HTTP timeout', async () => {
   renderForm();
   act(() => button('高级设置').click());
   act(() => change('name', '慢连接'));
   act(() => change('connect_timeout', '120'));
+  act(() => change('query_timeout', '120'));
   act(() => button('测试连接').click());
   await flush();
 
   expect(http.post).toHaveBeenCalledWith(
     '/api/database/connection/check/',
-    expect.objectContaining({connect_timeout: 120}),
-    {timeout: 125000},
+    expect.objectContaining({connect_timeout: 120, query_timeout: 120}),
+    {timeout: 245000},
   );
 });

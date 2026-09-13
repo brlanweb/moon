@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -8,6 +10,26 @@ from apps.database.policy import (
     classify_command,
     enforce_command_policy,
 )
+
+
+class FakeConfirmationRedis:
+    def __init__(self):
+        self.values = {}
+        self.lock = Lock()
+
+    def set(self, key, value, ex=None, nx=False):
+        with self.lock:
+            if nx and key in self.values:
+                return False
+            self.values[key] = value
+            return True
+
+    def getdel(self, key):
+        with self.lock:
+            return self.values.pop(key, None)
+
+    def eval(self, script, numkeys, key):
+        return self.getdel(key)
 
 
 class SqlClassificationTests(SimpleTestCase):
@@ -74,11 +96,13 @@ class SqlClassificationTests(SimpleTestCase):
                 self.assertIs(result.has_data_change, True)
 
     def test_mysql_executable_comment_is_conservatively_a_data_change(self):
-        for command in (
-                '/*!40101 DELETE FROM users */',
-                'SELECT 1; /*!50000 DROP TABLE users */'):
-            with self.subTest(command=command):
-                result = classify_command('mysql', command)
+        for database_type, command in (
+                ('mysql', '/*!40101 DELETE FROM users */'),
+                ('mysql', 'SELECT 1; /*!50000 DROP TABLE users */'),
+                ('mariadb', '/*!40101 DELETE FROM users */'),
+                ('mariadb', '/*M!100100 DELETE FROM users */')):
+            with self.subTest(database_type=database_type, command=command):
+                result = classify_command(database_type, command)
 
                 self.assertIs(result.read_only, False)
                 self.assertIs(result.has_data_change, True)
@@ -120,6 +144,16 @@ class RedisClassificationTests(SimpleTestCase):
 
 
 class CommandPolicyTests(SimpleTestCase):
+    def setUp(self):
+        self.redis = FakeConfirmationRedis()
+        redis_patch = patch(
+            'apps.database.policy.get_redis_connection',
+            return_value=self.redis,
+            create=True,
+        )
+        redis_patch.start()
+        self.addCleanup(redis_patch.stop)
+
     def connection(self, **changes):
         values = {
             'id': 23,
@@ -218,6 +252,20 @@ class CommandPolicyTests(SimpleTestCase):
         self.assertIs(decision.requires_confirmation, False)
         self.assertIsNone(decision.confirmation_token)
 
+    def test_production_known_ddl_does_not_require_confirmation(self):
+        connection = self.connection(environment='production')
+
+        for command in (
+                'CREATE TABLE audit_log (id INT)',
+                'ALTER TABLE audit_log ADD COLUMN message TEXT',
+                'DROP TABLE audit_log',
+                'TRUNCATE TABLE audit_log'):
+            with self.subTest(command=command):
+                decision = enforce_command_policy(connection, 7, command)
+
+                self.assertIs(decision.requires_confirmation, False)
+                self.assertIsNone(decision.confirmation_token)
+
     def test_production_data_change_returns_bound_confirmation_token(self):
         decision = enforce_command_policy(
             self.connection(environment='production'), 7, 'UPDATE users SET active = 1')
@@ -235,6 +283,40 @@ class CommandPolicyTests(SimpleTestCase):
             connection, 7, command, confirmation_token=first.confirmation_token)
 
         self.assertIs(confirmed.requires_confirmation, False)
+
+    def test_confirmation_token_cannot_be_replayed(self):
+        connection = self.connection(environment='production')
+        command = 'UPDATE users SET active = 1'
+        first = enforce_command_policy(connection, 7, command)
+
+        enforce_command_policy(
+            connection, 7, command, confirmation_token=first.confirmation_token)
+
+        with self.assertRaisesRegex(PolicyViolation, '确认令牌无效或已过期'):
+            enforce_command_policy(
+                connection, 7, command,
+                confirmation_token=first.confirmation_token,
+            )
+
+    def test_confirmation_token_is_consumed_atomically(self):
+        connection = self.connection(environment='production')
+        command = 'DELETE FROM users WHERE id = 3'
+        first = enforce_command_policy(connection, 7, command)
+
+        def consume():
+            try:
+                enforce_command_policy(
+                    connection, 7, command,
+                    confirmation_token=first.confirmation_token,
+                )
+                return True
+            except PolicyViolation:
+                return False
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            outcomes = list(executor.map(lambda _: consume(), range(2)))
+
+        self.assertEqual(sorted(outcomes), [False, True])
 
     def test_confirmation_token_is_bound_to_effective_database(self):
         connection = self.connection(environment='production')

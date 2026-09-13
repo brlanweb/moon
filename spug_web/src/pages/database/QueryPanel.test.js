@@ -30,6 +30,7 @@ const PRODUCTION_CONNECTION = {
   port: 3306,
   environment: 'production',
   read_only: false,
+  connect_timeout: 30,
   query_timeout: 120,
 };
 
@@ -101,7 +102,7 @@ test('shows a dangerous production confirmation without treating the challenge a
     id: 7,
     command: "UPDATE orders SET status = 'paid' WHERE id = 42;",
     database: 'tenant_42',
-  }, {timeout: 125000});
+  }, {timeout: 155000});
   const modal = document.querySelector('.ant-modal');
   expect(modal).not.toBeNull();
   expect(modal.textContent).toContain('生产订单库');
@@ -153,7 +154,7 @@ test('confirms by retrying the identical execution with the challenge token and 
     command: "UPDATE orders SET status = 'paid' WHERE id = 42;",
     database: 'tenant_42',
     confirmation_token: 'signed-token',
-  }, {timeout: 125000});
+  }, {timeout: 155000});
   expect(document.body.textContent).toContain('影响行数: 1');
 });
 

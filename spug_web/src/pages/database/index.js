@@ -49,6 +49,7 @@ export default function DatabaseConsole() {
   const tabsRef = useRef(tabs);
   const activeIdRef = useRef(activeId);
   const lastActivityRef = useRef({});
+  const inFlightQueriesRef = useRef({});
   const requestGenerationRef = useRef({});
   const selectionGenerationRef = useRef({});
 
@@ -67,7 +68,9 @@ export default function DatabaseConsole() {
       connectionsRef.current.forEach(item => {
         const timeout = Number(item.idle_timeout);
         const lastActivity = lastActivityRef.current[item.id];
-        if (timeout > 0 && lastActivity !== undefined && now - lastActivity >= timeout * 60 * 1000) {
+        const runningQueries = inFlightQueriesRef.current[item.id] || 0;
+        if (timeout > 0 && runningQueries === 0 && lastActivity !== undefined &&
+            now - lastActivity >= timeout * 60 * 1000) {
           disconnectConnection(item.id);
           message.info(t('连接【{}】因空闲已断开', item.name));
         }
@@ -78,6 +81,18 @@ export default function DatabaseConsole() {
 
   function markActivity(id) {
     lastActivityRef.current[id] = Date.now();
+  }
+
+  function startQuery(id) {
+    inFlightQueriesRef.current[id] = (inFlightQueriesRef.current[id] || 0) + 1;
+    markActivity(id);
+  }
+
+  function finishQuery(id) {
+    const runningQueries = inFlightQueriesRef.current[id];
+    if (runningQueries === undefined) return;
+    inFlightQueriesRef.current[id] = Math.max(0, runningQueries - 1);
+    markActivity(id);
   }
 
   function isMySQLConnection(item) {
@@ -118,6 +133,7 @@ export default function DatabaseConsole() {
     tabsRef.current = nextTabs;
     activeIdRef.current = nextActive;
     delete lastActivityRef.current[id];
+    delete inFlightQueriesRef.current[id];
     if (activeChanged && nextActive !== undefined) markActivity(nextActive);
     setTabs(nextTabs);
     setActiveId(nextActive);
@@ -211,7 +227,10 @@ export default function DatabaseConsole() {
     setConnectingId(item.id);
     http.get('/api/database/metadata/', {
       params: {id: item.id},
-      timeout: Math.max(45000, Number(item.connect_timeout || 0) * 1000 + 5000),
+      timeout: Math.max(
+        45000,
+        (Number(item.connect_timeout || 0) + Number(item.query_timeout || 0)) * 1000 + 5000,
+      ),
     })
       .then(data => {
         if (requestGenerationRef.current[item.id] !== generation) return;
@@ -322,6 +341,8 @@ export default function DatabaseConsole() {
           activeDatabase={activeDatabases[id] || item.database}
           command={commands[id]}
           onActivity={() => markActivity(id)}
+          onQueryStart={() => startQuery(id)}
+          onQueryFinish={() => finishQuery(id)}
           onCommandChange={value => setCommands(current => ({...current, [id]: value}))}/>
       ),
     };
@@ -384,7 +405,7 @@ export default function DatabaseConsole() {
         onClose={() => setFormVisible(false)}
         onSaved={() => {
           setFormVisible(false);
-          setMetadata({});
+          if (record.id) disconnectConnection(record.id);
           fetchConnections();
         }}/>
     </div>

@@ -6,8 +6,10 @@ import {http} from 'libs';
 import DatabaseConsole from './index';
 
 
+let mockPermissions;
+
 jest.mock('libs', () => ({
-  hasPermission: permission => ['database.connection.view', 'database.query.do'].includes(permission),
+  hasPermission: permission => mockPermissions.has(permission),
   http: {get: jest.fn(), post: jest.fn(), delete: jest.fn()},
   includes: (values, search) => values.some(value => String(value).includes(search)),
   t: (text, value) => value === undefined ? text : text.replace('{}', value),
@@ -145,6 +147,7 @@ async function disconnect(name) {
 beforeEach(() => {
   jest.clearAllMocks();
   jest.useRealTimers();
+  mockPermissions = new Set(['database.connection.view', 'database.query.do']);
   http.post.mockResolvedValue({});
   window.matchMedia = window.matchMedia || (() => ({matches: false, addListener() {}, removeListener() {}}));
   root = document.createElement('div');
@@ -594,8 +597,88 @@ test('idle timeout zero never disconnects automatically and cleans up the timer'
   }
 });
 
-test.each([1, undefined])('keeps the legacy metadata timeout floor for connect_timeout=%s', async connectTimeout => {
-  await renderConsole([{...CONNECTIONS[0], connect_timeout: connectTimeout}]);
+test('saving an open edited connection invalidates metadata and disconnects its old UI state', async () => {
+  mockPermissions.add('database.connection.edit');
+  const staleRequest = deferred();
+  await renderConsole();
+  await openConnection('主库');
+  http.get.mockImplementationOnce(() => staleRequest.promise);
+
+  act(() => findText('button', '刷新目录').click());
+  await openConnectionMenu('主库');
+  act(() => findText('.ant-dropdown-menu-item', '编辑').click());
+  await flush();
+  act(() => findText('button', '保存连接').click());
+  await flush();
+
+  expect(findText('.ant-tabs-tab', '主库')).toBeUndefined();
+  expect(document.querySelector('textarea[aria-label="database-command"]')).toBeNull();
+
+  await act(async () => {
+    staleRequest.resolve({groups: [{name: 'stale', items: ['old_table']}], truncated: false});
+    await Promise.resolve();
+  });
+  await flush();
+  expect(findText('.ant-tabs-tab', '主库')).toBeUndefined();
+  expect(findText('.ant-tree-title', 'stale')).toBeUndefined();
+
+  await openConnection('主库');
+  expect(document.querySelector('textarea[aria-label="database-command"]').value)
+    .toBe('SELECT VERSION();');
+  expect(http.get.mock.calls.filter(([url]) => url === '/api/database/metadata/'))
+    .toHaveLength(3);
+});
+
+test('idle cleanup skips a running query and restarts the idle clock after completion', async () => {
+  jest.useFakeTimers();
+  const now = jest.spyOn(Date, 'now').mockReturnValue(0);
+  const query = deferred();
+  const info = jest.spyOn(message, 'info').mockImplementation(() => {});
+  try {
+    await renderConsole();
+    await openConnection('主库');
+    http.post.mockReturnValue(query.promise);
+
+    now.mockReturnValue(45000);
+    act(() => findText('.ant-tabs-tabpane-active button', '运行').click());
+    now.mockReturnValue(120000);
+    act(() => jest.advanceTimersByTime(75000));
+    await flush();
+
+    expect(findText('.ant-tabs-tab', '主库')).not.toBeUndefined();
+    expect(info).not.toHaveBeenCalled();
+
+    await act(async () => {
+      query.resolve({columns: ['value'], rows: [[1]], affected: 0, elapsed: 75000});
+      await query.promise;
+    });
+    now.mockReturnValue(165000);
+    act(() => jest.advanceTimersByTime(45000));
+    await flush();
+    expect(findText('.ant-tabs-tab', '主库')).not.toBeUndefined();
+
+    now.mockReturnValue(181000);
+    act(() => jest.advanceTimersByTime(16000));
+    await flush();
+    expect(findText('.ant-tabs-tab', '主库')).toBeUndefined();
+    expect(info).toHaveBeenCalledTimes(1);
+  } finally {
+    now.mockRestore();
+    info.mockRestore();
+  }
+});
+
+test.each([
+  [1, 1],
+  [undefined, undefined],
+])('keeps the legacy metadata timeout floor for connect_timeout=%s query_timeout=%s', async (
+  connectTimeout, queryTimeout,
+) => {
+  await renderConsole([{
+    ...CONNECTIONS[0],
+    connect_timeout: connectTimeout,
+    query_timeout: queryTimeout,
+  }]);
   await openConnection('主库');
 
   expect(http.get).toHaveBeenCalledWith('/api/database/metadata/', {
@@ -604,12 +687,12 @@ test.each([1, undefined])('keeps the legacy metadata timeout floor for connect_t
   });
 });
 
-test('lets metadata loading honor the configured connection timeout', async () => {
-  await renderConsole([{...CONNECTIONS[0], connect_timeout: 120}]);
+test('lets metadata loading honor the combined connection and query timeout', async () => {
+  await renderConsole([{...CONNECTIONS[0], connect_timeout: 120, query_timeout: 120}]);
   await openConnection('主库');
 
   expect(http.get).toHaveBeenCalledWith('/api/database/metadata/', {
     params: {id: 1},
-    timeout: 125000,
+    timeout: 245000,
   });
 });

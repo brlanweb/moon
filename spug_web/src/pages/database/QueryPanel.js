@@ -25,7 +25,15 @@ function csvCell(value) {
   return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
-export default function QueryPanel({connection, activeDatabase, command, onCommandChange, onActivity}) {
+export default function QueryPanel({
+  connection,
+  activeDatabase,
+  command,
+  onCommandChange,
+  onActivity,
+  onQueryStart,
+  onQueryFinish,
+}) {
   const editorRef = useRef();
   const runningRef = useRef(false);
   const [running, setRunning] = useState(false);
@@ -47,7 +55,11 @@ export default function QueryPanel({connection, activeDatabase, command, onComma
     if (runningRef.current) return Promise.resolve();
     runningRef.current = true;
     setRunning(true);
-    const timeout = Math.max(45000, Number(connection.query_timeout || 0) * 1000 + 5000);
+    if (onQueryStart) onQueryStart();
+    const timeout = Math.max(
+      45000,
+      (Number(connection.connect_timeout || 0) + Number(connection.query_timeout || 0)) * 1000 + 5000,
+    );
     return http.post('/api/database/execute/', payload, {timeout})
       .then(data => {
         if (data.requires_confirmation) {
@@ -65,6 +77,7 @@ export default function QueryPanel({connection, activeDatabase, command, onComma
       .finally(() => {
         runningRef.current = false;
         setRunning(false);
+        if (onQueryFinish) onQueryFinish();
       });
   }
 

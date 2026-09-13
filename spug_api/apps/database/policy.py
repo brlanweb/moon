@@ -1,14 +1,24 @@
 import hashlib
 import shlex
 from dataclasses import dataclass
+from uuid import uuid4
 
 import sqlparse
 from django.core import signing
+from django_redis import get_redis_connection
 from sqlparse import tokens as T
 
 
 CONFIRMATION_MAX_AGE = 60
 _CONFIRMATION_SALT = 'apps.database.command-confirmation'
+_CONFIRMATION_KEY_PREFIX = 'spug:database:confirmation:'
+_CONSUME_CONFIRMATION_SCRIPT = """
+local value = redis.call('GET', KEYS[1])
+if value then
+    redis.call('DEL', KEYS[1])
+end
+return value
+"""
 
 _SQL_READ_TYPES = {'SELECT', 'SHOW', 'DESCRIBE', 'DESC', 'EXPLAIN'}
 _SQL_DATA_CHANGE_TYPES = {
@@ -106,7 +116,8 @@ def _copy_target(words):
 
 def _has_mysql_executable_comment(statement):
     return any(
-        token.ttype in T.Comment and token.value.lstrip().startswith('/*!')
+        token.ttype in T.Comment
+        and token.value.lstrip().startswith(('/*!', '/*M!'))
         for token in statement.flatten()
     )
 
@@ -153,7 +164,7 @@ def _classify_sql_statement(statement):
 def _classify_sql(database_type, command):
     parsed_statements = sqlparse.parse(command)
     has_executable_comment = (
-        database_type == 'mysql'
+        database_type in ('mysql', 'mariadb')
         and any(_has_mysql_executable_comment(statement)
                 for statement in parsed_statements)
     )
@@ -210,21 +221,35 @@ def _is_copy_to_program(database_type, command):
     )
 
 
-def _confirmation_payload(user_id, connection_id, command, database):
-    return {
+def _confirmation_payload(user_id, connection_id, command, database, nonce=None):
+    payload = {
         'user_id': user_id,
         'connection_id': connection_id,
         'command_sha256': hashlib.sha256(command.encode('utf-8')).hexdigest(),
         'database': database,
     }
+    if nonce is not None:
+        payload['nonce'] = nonce
+    return payload
+
+
+def _confirmation_key(nonce):
+    return f'{_CONFIRMATION_KEY_PREFIX}{nonce}'
 
 
 def _create_confirmation_token(user_id, connection_id, command, database):
-    return signing.dumps(
-        _confirmation_payload(user_id, connection_id, command, database),
-        salt=_CONFIRMATION_SALT,
-        compress=True,
-    )
+    redis = get_redis_connection()
+    for _ in range(3):
+        nonce = uuid4().hex
+        payload = _confirmation_payload(
+            user_id, connection_id, command, database, nonce=nonce,
+        )
+        token = signing.dumps(payload, salt=_CONFIRMATION_SALT, compress=True)
+        if redis.set(
+                _confirmation_key(nonce), token,
+                ex=CONFIRMATION_MAX_AGE, nx=True):
+            return token
+    raise PolicyViolation('无法创建确认令牌，请重试')
 
 
 def _validate_confirmation_token(token, user_id, connection_id, command, database):
@@ -236,7 +261,18 @@ def _validate_confirmation_token(token, user_id, connection_id, command, databas
         )
     except (signing.BadSignature, signing.SignatureExpired, TypeError, ValueError) as exc:
         raise PolicyViolation('确认令牌无效或已过期') from exc
-    if payload != _confirmation_payload(user_id, connection_id, command, database):
+    nonce = payload.get('nonce') if isinstance(payload, dict) else None
+    expected = _confirmation_payload(
+        user_id, connection_id, command, database, nonce=nonce,
+    )
+    if not isinstance(nonce, str) or not nonce or payload != expected:
+        raise PolicyViolation('确认令牌无效或已过期')
+    stored_token = get_redis_connection().eval(
+        _CONSUME_CONFIRMATION_SCRIPT, 1, _confirmation_key(nonce),
+    )
+    if isinstance(stored_token, bytes):
+        stored_token = stored_token.decode('utf-8')
+    if stored_token != token:
         raise PolicyViolation('确认令牌无效或已过期')
 
 
@@ -252,7 +288,7 @@ def enforce_command_policy(
 
     requires_confirmation = (
         connection.environment == 'production'
-        and (not classification.known or not classification.read_only)
+        and (classification.has_data_change or not classification.known)
     )
     if not requires_confirmation:
         return PolicyDecision(classification.statement_types)

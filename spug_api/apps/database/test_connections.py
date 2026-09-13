@@ -8,6 +8,7 @@ from apps.database.client import (
     _clickhouse, _mysql, _postgresql, _redis, _redis_execute, execute, test_connection,
 )
 from apps.database.models import DatabaseConnection
+from apps.database.test_policy import FakeConfirmationRedis
 from apps.database.views import (
     _connection_form, _temporary_connection, check_connection, run_command,
 )
@@ -175,6 +176,7 @@ class DriverTimeoutTests(SimpleTestCase):
             username='spug',
             database='operations',
             use_ssl=False,
+            read_only=False,
             connect_timeout=17,
             query_timeout=83,
             get_password=lambda: 'secret',
@@ -189,6 +191,20 @@ class DriverTimeoutTests(SimpleTestCase):
         self.assertEqual(kwargs['connect_timeout'], 17)
         self.assertEqual(kwargs['read_timeout'], 83)
         self.assertEqual(kwargs['write_timeout'], 83)
+
+    @patch('pymysql.connect')
+    def test_mysql_and_mariadb_read_only_connections_enforce_session_read_only(self, connect):
+        for database_type in ('mysql', 'mariadb'):
+            with self.subTest(database_type=database_type):
+                connection = self.connection(database_type)
+                connection.read_only = True
+
+                _mysql(connection)
+
+                self.assertEqual(
+                    connect.call_args.kwargs['init_command'],
+                    'SET SESSION TRANSACTION READ ONLY',
+                )
 
     @patch('pymysql.connect')
     def test_mysql_receives_request_database_override(self, connect):
@@ -218,6 +234,18 @@ class DriverTimeoutTests(SimpleTestCase):
         self.assertEqual(kwargs['connect_timeout'], 17)
         self.assertEqual(kwargs['options'], '-c statement_timeout=83000')
 
+    @patch('psycopg.connect')
+    def test_postgresql_read_only_connection_enforces_session_read_only(self, connect):
+        connection = self.connection('postgresql')
+        connection.read_only = True
+
+        _postgresql(connection)
+
+        self.assertEqual(
+            connect.call_args.kwargs['options'],
+            '-c statement_timeout=83000 -c default_transaction_read_only=on',
+        )
+
     @patch('clickhouse_connect.get_client')
     def test_clickhouse_receives_connection_timeouts(self, get_client):
         _clickhouse(self.connection('clickhouse'))
@@ -225,6 +253,15 @@ class DriverTimeoutTests(SimpleTestCase):
         kwargs = get_client.call_args.kwargs
         self.assertEqual(kwargs['connect_timeout'], 17)
         self.assertEqual(kwargs['send_receive_timeout'], 83)
+
+    @patch('clickhouse_connect.get_client')
+    def test_clickhouse_read_only_connection_enforces_session_read_only(self, get_client):
+        connection = self.connection('clickhouse')
+        connection.read_only = True
+
+        _clickhouse(connection)
+
+        self.assertEqual(get_client.call_args.kwargs['settings'], {'readonly': 1})
 
     @patch('redis.Redis')
     def test_redis_receives_connection_timeouts(self, redis_client):
@@ -272,6 +309,14 @@ class RunCommandPolicyTests(SimpleTestCase):
             environment='production',
         )
         self.user = SimpleNamespace(id=7, has_perms=lambda _perms: True)
+        self.redis = FakeConfirmationRedis()
+        redis_patch = patch(
+            'apps.database.policy.get_redis_connection',
+            return_value=self.redis,
+            create=True,
+        )
+        redis_patch.start()
+        self.addCleanup(redis_patch.stop)
 
     def request(self, command, confirmation_token=None, database=None, include_database=False):
         payload = {'id': self.connection.id, 'command': command}
@@ -337,6 +382,36 @@ class RunCommandPolicyTests(SimpleTestCase):
         payload = json.loads(response.content)
         self.assertFalse(payload['error'])
         self.assertEqual(payload['data'], {'rows': [], 'affected': 1})
+        execute_command.assert_called_once_with(self.connection, command, database=None)
+
+    @patch('apps.database.views.execute', return_value={'rows': [], 'affected': 1})
+    @patch('apps.database.views.DatabaseConnection.objects.filter')
+    def test_matching_confirmation_token_cannot_execute_twice(
+            self, connections, execute_command):
+        connections.return_value.first.return_value = self.connection
+        command = 'DELETE FROM users WHERE id = 3'
+        challenge = json.loads(run_command(self.request(command)).content)['data']
+
+        first = run_command(self.request(command, challenge['confirmation_token']))
+        replay = run_command(self.request(command, challenge['confirmation_token']))
+
+        self.assertFalse(json.loads(first.content)['error'])
+        self.assertEqual(
+            json.loads(replay.content)['error'],
+            '确认令牌无效或已过期',
+        )
+        execute_command.assert_called_once_with(self.connection, command, database=None)
+
+    @patch('apps.database.views.execute', return_value={'rows': [], 'affected': 0})
+    @patch('apps.database.views.DatabaseConnection.objects.filter')
+    def test_production_known_ddl_executes_without_confirmation(
+            self, connections, execute_command):
+        connections.return_value.first.return_value = self.connection
+        command = 'CREATE TABLE audit_log (id INT)'
+
+        response = run_command(self.request(command))
+
+        self.assertFalse(json.loads(response.content)['error'])
         execute_command.assert_called_once_with(self.connection, command, database=None)
 
     @patch('apps.database.views.execute', return_value={'rows': [], 'affected': 0})
