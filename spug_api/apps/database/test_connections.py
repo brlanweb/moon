@@ -8,7 +8,9 @@ from apps.database.client import (
     _clickhouse, _mysql, _postgresql, _redis, test_connection,
 )
 from apps.database.models import DatabaseConnection
-from apps.database.views import _connection_form, _temporary_connection, check_connection
+from apps.database.views import (
+    _connection_form, _temporary_connection, check_connection, run_command,
+)
 
 
 class ConnectionSettingsTests(SimpleTestCase):
@@ -222,3 +224,84 @@ class DriverTimeoutTests(SimpleTestCase):
         test_connection(self.connection('mysql'))
 
         client.close.assert_called_once_with()
+
+
+class RunCommandPolicyTests(SimpleTestCase):
+    def setUp(self):
+        self.connection = SimpleNamespace(
+            id=23,
+            type='mysql',
+            read_only=False,
+            environment='production',
+        )
+        self.user = SimpleNamespace(id=7, has_perms=lambda _perms: True)
+
+    def request(self, command, confirmation_token=None):
+        payload = {'id': self.connection.id, 'command': command}
+        if confirmation_token is not None:
+            payload['confirmation_token'] = confirmation_token
+        request = RequestFactory().post(
+            '/api/database/execute/',
+            data=json.dumps(payload),
+            content_type='application/json',
+        )
+        request.user = self.user
+        return request
+
+    @patch('apps.database.views.execute')
+    @patch('apps.database.views.DatabaseConnection.objects.filter')
+    def test_production_data_change_returns_challenge_without_executing(
+            self, connections, execute_command):
+        connections.return_value.first.return_value = self.connection
+
+        response = run_command(self.request('UPDATE users SET active = 1'))
+
+        payload = json.loads(response.content)
+        self.assertFalse(payload['error'])
+        self.assertIs(payload['data']['requires_confirmation'], True)
+        self.assertTrue(payload['data']['confirmation_token'])
+        self.assertEqual(payload['data']['statement_types'], ['UPDATE'])
+        execute_command.assert_not_called()
+
+    @patch('apps.database.views.execute', return_value={'rows': [], 'affected': 1})
+    @patch('apps.database.views.DatabaseConnection.objects.filter')
+    def test_matching_confirmation_token_executes_command(self, connections, execute_command):
+        connections.return_value.first.return_value = self.connection
+        command = 'DELETE FROM users WHERE id = 3'
+        challenge = json.loads(run_command(self.request(command)).content)['data']
+
+        response = run_command(
+            self.request(command, challenge['confirmation_token']))
+
+        payload = json.loads(response.content)
+        self.assertFalse(payload['error'])
+        self.assertEqual(payload['data'], {'rows': [], 'affected': 1})
+        execute_command.assert_called_once_with(self.connection, command)
+
+    @patch('apps.database.views.execute')
+    @patch('apps.database.views.DatabaseConnection.objects.filter')
+    def test_mismatched_confirmation_token_is_rejected_without_executing(
+            self, connections, execute_command):
+        connections.return_value.first.return_value = self.connection
+        original = 'UPDATE users SET active = 1'
+        challenge = json.loads(run_command(self.request(original)).content)['data']
+
+        response = run_command(self.request(
+            'UPDATE users SET active = 0', challenge['confirmation_token']))
+
+        payload = json.loads(response.content)
+        self.assertEqual(payload['error'], '确认令牌无效或已过期')
+        execute_command.assert_not_called()
+
+    @patch('apps.database.views.execute')
+    @patch('apps.database.views.DatabaseConnection.objects.filter')
+    def test_read_only_violation_is_rejected_without_executing(
+            self, connections, execute_command):
+        self.connection.read_only = True
+        connections.return_value.first.return_value = self.connection
+
+        response = run_command(self.request('DROP TABLE users'))
+
+        payload = json.loads(response.content)
+        self.assertIn('只读连接', payload['error'])
+        execute_command.assert_not_called()

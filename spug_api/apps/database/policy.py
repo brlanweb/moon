@@ -1,0 +1,227 @@
+import hashlib
+import shlex
+from dataclasses import dataclass
+
+import sqlparse
+from django.core import signing
+from sqlparse import tokens as T
+
+
+CONFIRMATION_MAX_AGE = 60
+_CONFIRMATION_SALT = 'apps.database.command-confirmation'
+
+_SQL_READ_TYPES = {'SELECT', 'SHOW', 'DESCRIBE', 'DESC', 'EXPLAIN'}
+_SQL_DATA_CHANGE_TYPES = {
+    'INSERT', 'UPDATE', 'DELETE', 'REPLACE', 'MERGE', 'UPSERT', 'LOAD',
+}
+_SQL_KNOWN_NON_READ_TYPES = {
+    'ALTER', 'ANALYZE', 'BEGIN', 'CALL', 'COMMENT', 'COMMIT', 'CREATE',
+    'DECLARE', 'DROP', 'EXEC', 'EXECUTE', 'GRANT', 'LOCK', 'REINDEX',
+    'REVOKE', 'ROLLBACK', 'SET', 'TRUNCATE', 'VACUUM',
+}
+_REDIS_READ_COMMANDS = {
+    'BITCOUNT', 'BITFIELD_RO', 'BITPOS', 'DBSIZE', 'DUMP', 'ECHO', 'EXISTS',
+    'GEODIST', 'GEOHASH', 'GEOPOS', 'GEOSEARCH', 'GET', 'GETBIT', 'GETRANGE',
+    'HEXISTS', 'HGET', 'HGETALL', 'HKEYS', 'HLEN', 'HMGET', 'HRANDFIELD',
+    'HSCAN', 'HSTRLEN', 'HVALS', 'INFO', 'KEYS', 'LINDEX', 'LLEN', 'LPOS',
+    'LRANGE', 'MGET', 'OBJECT', 'PFCOUNT', 'PING', 'PTTL',
+    'RANDOMKEY', 'SCAN', 'SCARD', 'SDIFF', 'SINTER', 'SINTERCARD',
+    'SISMEMBER', 'SMEMBERS', 'SMISMEMBER', 'SRANDMEMBER', 'SSCAN', 'STRLEN',
+    'SUNION', 'TIME', 'TTL', 'TYPE', 'XINFO', 'XLEN', 'XPENDING',
+    'XRANGE', 'XREAD', 'XREVRANGE', 'ZCARD', 'ZCOUNT', 'ZDIFF', 'ZINTER',
+    'ZINTERCARD', 'ZLEXCOUNT', 'ZMSCORE', 'ZRANDMEMBER', 'ZRANGE',
+    'ZRANGEBYLEX', 'ZRANGEBYSCORE', 'ZRANK', 'ZREVRANGE', 'ZREVRANGEBYLEX',
+    'ZREVRANGEBYSCORE', 'ZREVRANK', 'ZSCAN', 'ZSCORE', 'ZUNION',
+}
+_REDIS_WRITE_COMMANDS = {
+    'APPEND', 'BITFIELD', 'BITOP', 'BLMOVE', 'BLMPOP', 'BLPOP', 'BRPOP',
+    'BRPOPLPUSH', 'BZPOPMAX', 'BZPOPMIN', 'COPY', 'DECR', 'DECRBY', 'DEL',
+    'EXPIRE', 'EXPIREAT', 'FLUSHALL', 'FLUSHDB', 'GEOADD', 'GETDEL',
+    'GETEX', 'GETSET', 'HDEL', 'HINCRBY', 'HINCRBYFLOAT', 'HMSET', 'HSET',
+    'HSETNX', 'INCR', 'INCRBY', 'INCRBYFLOAT', 'LINSERT', 'LMOVE', 'LMPOP',
+    'LPOP', 'LPUSH', 'LPUSHX', 'LREM', 'LSET', 'LTRIM', 'MIGRATE', 'MSET',
+    'MSETNX', 'PERSIST', 'PEXPIRE', 'PEXPIREAT', 'PFADD', 'PFMERGE', 'PSETEX',
+    'RENAME', 'RENAMENX', 'RESTORE', 'RPOP', 'RPOPLPUSH', 'RPUSH', 'RPUSHX',
+    'SADD', 'SDIFFSTORE', 'SET', 'SETBIT', 'SETEX', 'SETNX', 'SETRANGE',
+    'SINTERSTORE', 'SMOVE', 'SORT', 'SPOP', 'SREM', 'SUNIONSTORE', 'SWAPDB',
+    'TOUCH', 'UNLINK', 'XACK', 'XADD', 'XAUTOCLAIM', 'XCLAIM', 'XDEL', 'XGROUP',
+    'XSETID', 'XTRIM', 'ZADD', 'ZDIFFSTORE', 'ZINCRBY', 'ZINTERSTORE',
+    'ZMPOP', 'ZPOPMAX', 'ZPOPMIN', 'ZRANGESTORE', 'ZREM', 'ZREMRANGEBYLEX',
+    'ZREMRANGEBYRANK', 'ZREMRANGEBYSCORE', 'ZUNIONSTORE',
+}
+_REDIS_READ_SUBCOMMANDS = {
+    'MEMORY': {'DOCTOR', 'MALLOC-STATS', 'STATS', 'USAGE'},
+}
+_REDIS_WRITE_SUBCOMMANDS = {
+    'MEMORY': {'PURGE'},
+}
+
+
+class PolicyViolation(Exception):
+    pass
+
+
+@dataclass(frozen=True)
+class CommandClassification:
+    statement_types: tuple
+    read_only: bool
+    has_data_change: bool
+    known: bool
+
+
+@dataclass(frozen=True)
+class PolicyDecision:
+    statement_types: tuple
+    requires_confirmation: bool = False
+    confirmation_token: str = None
+
+
+def _meaningful_tokens(statement):
+    return [
+        token for token in statement.flatten()
+        if not token.is_whitespace
+        and token.ttype not in T.Comment
+        and not (token.ttype in T.Punctuation and token.value == ';')
+    ]
+
+
+def _top_level_words(statement):
+    return [
+        token.value.upper()
+        for token in statement.tokens
+        if not token.is_whitespace and token.ttype not in T.Comment
+    ]
+
+
+def _classify_sql_statement(statement):
+    tokens = _meaningful_tokens(statement)
+    if not tokens:
+        return 'UNKNOWN', False, False, False
+
+    words = [token.value.upper() for token in tokens]
+    parsed_type = statement.get_type().upper()
+    statement_type = parsed_type if parsed_type != 'UNKNOWN' else words[0]
+
+    if statement_type == 'COPY':
+        top_level_words = _top_level_words(statement)
+        is_write = 'FROM' in top_level_words
+        is_read = 'TO' in top_level_words and not is_write
+        return statement_type, is_read, is_write, is_read or is_write
+
+    mutation_tokens = {
+        token.value.upper()
+        for token in tokens
+        if token.ttype in T.Keyword.DML
+    } & _SQL_DATA_CHANGE_TYPES
+    if words[0] == 'LOAD' and len(words) > 1 and words[1] == 'DATA':
+        mutation_tokens.add('LOAD')
+    if words[0] == 'EXPLAIN' and 'ANALYZE' not in words:
+        mutation_tokens.clear()
+
+    has_data_change = statement_type in _SQL_DATA_CHANGE_TYPES or bool(mutation_tokens)
+    read_only = statement_type in _SQL_READ_TYPES and not has_data_change
+    known = (
+        statement_type in _SQL_READ_TYPES
+        or statement_type in _SQL_DATA_CHANGE_TYPES
+        or statement_type in _SQL_KNOWN_NON_READ_TYPES
+        or parsed_type != 'UNKNOWN'
+    )
+    return statement_type, read_only, has_data_change, known
+
+
+def _classify_sql(command):
+    statements = []
+    for statement in sqlparse.parse(command):
+        classified = _classify_sql_statement(statement)
+        if classified[0] != 'UNKNOWN' or _meaningful_tokens(statement):
+            statements.append(classified)
+    if not statements:
+        statements.append(('UNKNOWN', False, False, False))
+    return CommandClassification(
+        statement_types=tuple(item[0] for item in statements),
+        read_only=all(item[1] for item in statements),
+        has_data_change=any(item[2] for item in statements),
+        known=all(item[3] for item in statements),
+    )
+
+
+def _classify_redis(command):
+    try:
+        args = shlex.split(command)
+    except ValueError:
+        args = []
+    command_type = args[0].upper() if args else 'UNKNOWN'
+    subcommand = args[1].upper() if len(args) > 1 else None
+    is_read = (
+        command_type in _REDIS_READ_COMMANDS
+        or subcommand in _REDIS_READ_SUBCOMMANDS.get(command_type, set())
+    )
+    is_write = (
+        command_type in _REDIS_WRITE_COMMANDS
+        or subcommand in _REDIS_WRITE_SUBCOMMANDS.get(command_type, set())
+    )
+    return CommandClassification(
+        statement_types=(command_type,),
+        read_only=is_read,
+        has_data_change=is_write,
+        known=is_read or is_write,
+    )
+
+
+def classify_command(database_type, command):
+    if database_type == 'redis':
+        return _classify_redis(command)
+    return _classify_sql(command)
+
+
+def _confirmation_payload(user_id, connection_id, command):
+    return {
+        'user_id': user_id,
+        'connection_id': connection_id,
+        'command_sha256': hashlib.sha256(command.encode('utf-8')).hexdigest(),
+    }
+
+
+def _create_confirmation_token(user_id, connection_id, command):
+    return signing.dumps(
+        _confirmation_payload(user_id, connection_id, command),
+        salt=_CONFIRMATION_SALT,
+        compress=True,
+    )
+
+
+def _validate_confirmation_token(token, user_id, connection_id, command):
+    try:
+        payload = signing.loads(
+            token,
+            salt=_CONFIRMATION_SALT,
+            max_age=CONFIRMATION_MAX_AGE,
+        )
+    except (signing.BadSignature, signing.SignatureExpired, TypeError, ValueError) as exc:
+        raise PolicyViolation('确认令牌无效或已过期') from exc
+    if payload != _confirmation_payload(user_id, connection_id, command):
+        raise PolicyViolation('确认令牌无效或已过期')
+
+
+def enforce_command_policy(connection, user_id, command, confirmation_token=None):
+    classification = classify_command(connection.type, command)
+    if connection.read_only and not classification.read_only:
+        raise PolicyViolation('只读连接不允许执行该命令')
+
+    requires_confirmation = (
+        connection.environment == 'production' and classification.has_data_change
+    )
+    if not requires_confirmation:
+        return PolicyDecision(classification.statement_types)
+    if confirmation_token:
+        _validate_confirmation_token(
+            confirmation_token, user_id, connection.id, command,
+        )
+        return PolicyDecision(classification.statement_types)
+    return PolicyDecision(
+        classification.statement_types,
+        requires_confirmation=True,
+        confirmation_token=_create_confirmation_token(
+            user_id, connection.id, command,
+        ),
+    )

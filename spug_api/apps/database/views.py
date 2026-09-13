@@ -4,6 +4,7 @@ from django.views.generic import View
 from libs import Argument, JsonParser, auth, json_response
 from apps.database.client import DatabaseClientError, execute, metadata, test_connection
 from apps.database.models import DatabaseConnection
+from apps.database.policy import PolicyViolation, enforce_command_policy
 
 
 class _StrictInteger(int):
@@ -144,6 +145,7 @@ def run_command(request):
     form, error = JsonParser(
         Argument('id', type=int, help='请指定数据库连接'),
         Argument('command', help='请输入要执行的命令'),
+        Argument('confirmation_token', required=False),
     ).parse(request.body)
     if error:
         return json_response(error=error)
@@ -151,6 +153,20 @@ def run_command(request):
     if not item:
         return json_response(error='数据库连接不存在')
     try:
+        decision = enforce_command_policy(
+            item,
+            request.user.id,
+            form.command,
+            confirmation_token=form.confirmation_token,
+        )
+        if decision.requires_confirmation:
+            return json_response({
+                'requires_confirmation': True,
+                'confirmation_token': decision.confirmation_token,
+                'statement_types': list(decision.statement_types),
+            })
         return json_response(execute(item, form.command))
+    except PolicyViolation as exc:
+        return json_response(error=str(exc))
     except DatabaseClientError as exc:
         return json_response(error=f'执行失败: {exc}')
