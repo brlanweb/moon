@@ -25,7 +25,7 @@ function csvCell(value) {
   return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
-export default function QueryPanel({connection, command, onCommandChange, onActivity}) {
+export default function QueryPanel({connection, activeDatabase, command, onCommandChange, onActivity}) {
   const editorRef = useRef();
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState();
@@ -49,7 +49,11 @@ export default function QueryPanel({connection, command, onCommandChange, onActi
       return;
     }
     setRunning(true);
-    http.post('/api/database/execute/', {id: connection.id, command: statement}, {timeout: 45000})
+    http.post('/api/database/execute/', {
+      id: connection.id,
+      command: statement,
+      database: activeDatabase,
+    }, {timeout: 45000})
       .then(setResult)
       .finally(() => setRunning(false));
   }
@@ -101,7 +105,7 @@ export default function QueryPanel({connection, command, onCommandChange, onActi
             <div className={styles.connectionTitle}>{connection.name}</div>
             <div className={styles.endpoint}>
               {connection.username ? `${connection.username}@` : ''}{connection.host}:{connection.port}
-              {connection.database ? ` / ${connection.database}` : ''}
+              {activeDatabase ? ` / ${activeDatabase}` : ''}
             </div>
           </div>
           <Tag className={styles.engineTag}>{connection.type_alias}</Tag>

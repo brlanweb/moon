@@ -66,7 +66,10 @@ const CONNECTIONS = [
 ];
 
 const METADATA = {
-  groups: [{name: 'public', items: ['orders']}],
+  groups: [
+    {name: 'public', items: ['orders']},
+    {name: 'analytics', items: ['daily_metrics']},
+  ],
   truncated: false,
 };
 
@@ -423,11 +426,91 @@ test('clicking run refreshes query activity', async () => {
     expect(http.post).toHaveBeenCalledWith('/api/database/execute/', {
       id: 1,
       command: 'SELECT VERSION();',
+      database: 'public',
     }, {timeout: 45000});
   } finally {
     now.mockRestore();
     info.mockRestore();
   }
+});
+
+test('uses the configured MySQL database before the first metadata group', async () => {
+  await renderConsole([{...CONNECTIONS[0], database: 'operations'}]);
+  await openConnection('主库');
+
+  expect(document.querySelector('.ant-tabs-tabpane-active').textContent)
+    .toContain('/ operations');
+  act(() => findText('.ant-tabs-tabpane-active button', '运行').click());
+  await flush();
+
+  expect(http.post).toHaveBeenCalledWith('/api/database/execute/', {
+    id: 1,
+    command: 'SELECT VERSION();',
+    database: 'operations',
+  }, {timeout: 45000});
+});
+
+test('switches the active MySQL database when selecting a group or table', async () => {
+  await renderConsole();
+  await openConnection('主库');
+
+  act(() => findText('.ant-tree-title', 'analytics')
+    .closest('.ant-tree-node-content-wrapper').click());
+  await flush();
+  expect(document.querySelector('.ant-tabs-tabpane-active').textContent)
+    .toContain('/ analytics');
+  act(() => findText('.ant-tabs-tabpane-active button', '运行').click());
+  await flush();
+  expect(http.post).toHaveBeenLastCalledWith('/api/database/execute/', {
+    id: 1,
+    command: 'SELECT VERSION();',
+    database: 'analytics',
+  }, {timeout: 45000});
+
+  const publicGroup = findText('.ant-tree-title', 'public');
+  act(() => publicGroup.closest('.ant-tree-treenode')
+    .querySelector('.ant-tree-switcher').click());
+  await flush();
+  act(() => findText('.ant-tree-title', 'orders')
+    .closest('.ant-tree-node-content-wrapper').click());
+  await flush();
+  expect(document.querySelector('.ant-tabs-tabpane-active').textContent)
+    .toContain('/ public');
+});
+
+test('metadata refresh restores the configured MySQL database', async () => {
+  await renderConsole([{...CONNECTIONS[0], database: 'operations'}]);
+  await openConnection('主库');
+  act(() => findText('.ant-tree-title', 'analytics')
+    .closest('.ant-tree-node-content-wrapper').click());
+  await flush();
+  expect(document.querySelector('.ant-tabs-tabpane-active').textContent)
+    .toContain('/ analytics');
+
+  act(() => findText('button', '刷新目录').click());
+  await flush();
+
+  expect(document.querySelector('.ant-tabs-tabpane-active').textContent)
+    .toContain('/ operations');
+});
+
+test('closing a tab preserves the active database while disconnecting clears it', async () => {
+  await renderConsole();
+  await openConnection('主库');
+  act(() => findText('.ant-tree-title', 'analytics')
+    .closest('.ant-tree-node-content-wrapper').click());
+  await flush();
+
+  act(() => document.querySelector('.ant-tabs-tab-remove').click());
+  await flush();
+  await openConnection('主库');
+  expect(document.querySelector('.ant-tabs-tabpane-active').textContent)
+    .toContain('/ analytics');
+
+  await disconnect('主库');
+  await openConnection('主库');
+  expect(document.querySelector('.ant-tabs-tabpane-active').textContent)
+    .toContain('/ public');
 });
 
 test('idle timeout zero never disconnects automatically and cleans up the timer', async () => {

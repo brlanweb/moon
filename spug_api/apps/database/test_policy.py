@@ -236,6 +236,20 @@ class CommandPolicyTests(SimpleTestCase):
 
         self.assertIs(confirmed.requires_confirmation, False)
 
+    def test_confirmation_token_is_bound_to_effective_database(self):
+        connection = self.connection(environment='production')
+        command = 'UPDATE users SET active = 1'
+        first = enforce_command_policy(connection, 7, command, database='analytics')
+
+        with self.assertRaisesRegex(PolicyViolation, '确认令牌无效或已过期'):
+            enforce_command_policy(
+                connection,
+                7,
+                command,
+                confirmation_token=first.confirmation_token,
+                database='archive',
+            )
+
     def test_tampered_confirmation_token_is_rejected(self):
         connection = self.connection(environment='production')
         command = 'DELETE FROM users WHERE id = 3'

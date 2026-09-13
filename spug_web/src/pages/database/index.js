@@ -42,6 +42,7 @@ export default function DatabaseConsole() {
   const [activeId, setActiveId] = useState();
   const [expandedKeys, setExpandedKeys] = useState([]);
   const [commands, setCommands] = useState({});
+  const [activeDatabases, setActiveDatabases] = useState({});
   const [formVisible, setFormVisible] = useState(false);
   const [record, setRecord] = useState({});
   const connectionsRef = useRef(connections);
@@ -78,6 +79,22 @@ export default function DatabaseConsole() {
     lastActivityRef.current[id] = Date.now();
   }
 
+  function isMySQLConnection(item) {
+    return item.type === 'mysql' || item.type === 'mariadb';
+  }
+
+  function initializeActiveDatabase(item, data) {
+    if (!isMySQLConnection(item)) return;
+    const database = item.database || data.groups?.[0]?.name;
+    if (!database) return;
+    setActiveDatabases(current => ({...current, [item.id]: database}));
+  }
+
+  function selectActiveDatabase(item, database) {
+    if (!isMySQLConnection(item)) return;
+    setActiveDatabases(current => ({...current, [item.id]: database}));
+  }
+
   function nextRequestGeneration(id) {
     const generation = (requestGenerationRef.current[id] || 0) + 1;
     requestGenerationRef.current[id] = generation;
@@ -109,6 +126,11 @@ export default function DatabaseConsole() {
       return next;
     });
     setCommands(current => {
+      const next = {...current};
+      delete next[id];
+      return next;
+    });
+    setActiveDatabases(current => {
       const next = {...current};
       delete next[id];
       return next;
@@ -188,6 +210,7 @@ export default function DatabaseConsole() {
       .then(data => {
         if (requestGenerationRef.current[item.id] !== generation) return;
         setMetadata(current => ({...current, [item.id]: data}));
+        initializeActiveDatabase(item, data);
         activate();
         if (data.truncated) message.warning(t('对象较多，目录仅展示前 5000 项'));
       })
@@ -206,8 +229,14 @@ export default function DatabaseConsole() {
       openConnection(item);
       return;
     }
+    if (node.kind === 'group') {
+      openConnection(item);
+      selectActiveDatabase(item, node.namespace);
+      return;
+    }
     if (node.kind === 'table') {
       openConnection(item);
+      selectActiveDatabase(item, node.namespace);
       let command;
       if (item.type === 'redis') {
         command = `TYPE ${JSON.stringify(node.item)}`;
@@ -257,6 +286,7 @@ export default function DatabaseConsole() {
         key: `group-${item.id}-${groupIndex}`,
         connectionId: item.id,
         kind: 'group',
+        namespace: group.name,
         title: group.name,
         children: group.items.map((name, itemIndex) => ({
           key: `item-${item.id}-${groupIndex}-${itemIndex}`,
@@ -281,6 +311,7 @@ export default function DatabaseConsole() {
       children: (
         <QueryPanel
           connection={item}
+          activeDatabase={activeDatabases[id] || item.database}
           command={commands[id]}
           onActivity={() => markActivity(id)}
           onCommandChange={value => setCommands(current => ({...current, [id]: value}))}/>

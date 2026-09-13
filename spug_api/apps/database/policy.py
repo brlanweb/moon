@@ -210,23 +210,24 @@ def _is_copy_to_program(database_type, command):
     )
 
 
-def _confirmation_payload(user_id, connection_id, command):
+def _confirmation_payload(user_id, connection_id, command, database):
     return {
         'user_id': user_id,
         'connection_id': connection_id,
         'command_sha256': hashlib.sha256(command.encode('utf-8')).hexdigest(),
+        'database': database,
     }
 
 
-def _create_confirmation_token(user_id, connection_id, command):
+def _create_confirmation_token(user_id, connection_id, command, database):
     return signing.dumps(
-        _confirmation_payload(user_id, connection_id, command),
+        _confirmation_payload(user_id, connection_id, command, database),
         salt=_CONFIRMATION_SALT,
         compress=True,
     )
 
 
-def _validate_confirmation_token(token, user_id, connection_id, command):
+def _validate_confirmation_token(token, user_id, connection_id, command, database):
     try:
         payload = signing.loads(
             token,
@@ -235,11 +236,13 @@ def _validate_confirmation_token(token, user_id, connection_id, command):
         )
     except (signing.BadSignature, signing.SignatureExpired, TypeError, ValueError) as exc:
         raise PolicyViolation('确认令牌无效或已过期') from exc
-    if payload != _confirmation_payload(user_id, connection_id, command):
+    if payload != _confirmation_payload(user_id, connection_id, command, database):
         raise PolicyViolation('确认令牌无效或已过期')
 
 
-def enforce_command_policy(connection, user_id, command, confirmation_token=None):
+def enforce_command_policy(
+        connection, user_id, command, confirmation_token=None, database=None):
+    effective_database = database if database is not None else getattr(connection, 'database', None)
     classification = classify_command(connection.type, command)
     if _is_copy_to_program(connection.type, command):
         raise PolicyViolation('不允许执行 COPY TO PROGRAM')
@@ -255,13 +258,13 @@ def enforce_command_policy(connection, user_id, command, confirmation_token=None
         return PolicyDecision(classification.statement_types)
     if confirmation_token:
         _validate_confirmation_token(
-            confirmation_token, user_id, connection.id, command,
+            confirmation_token, user_id, connection.id, command, effective_database,
         )
         return PolicyDecision(classification.statement_types)
     return PolicyDecision(
         classification.statement_types,
         requires_confirmation=True,
         confirmation_token=_create_confirmation_token(
-            user_id, connection.id, command,
+            user_id, connection.id, command, effective_database,
         ),
     )

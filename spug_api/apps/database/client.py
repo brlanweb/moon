@@ -38,14 +38,15 @@ def _result(columns, rows, elapsed, affected=0, truncated=False, message=''):
     }
 
 
-def _mysql(connection):
+def _mysql(connection, database=None):
     import pymysql
 
     ssl = {} if connection.use_ssl else None
+    selected_database = connection.database if database is None else database
     return pymysql.connect(
         host=connection.host, port=connection.port,
         user=connection.username or None, password=connection.get_password(),
-        database=connection.database or None, charset='utf8mb4', autocommit=True,
+        database=selected_database or None, charset='utf8mb4', autocommit=True,
         connect_timeout=connection.connect_timeout, read_timeout=connection.query_timeout,
         write_timeout=connection.query_timeout, ssl=ssl,
     )
@@ -165,13 +166,13 @@ def _redis_execute(client, command):
     return _result(['value'], [[json.dumps(value, ensure_ascii=False, default=str)]], elapsed)
 
 
-def execute(connection, command):
+def execute(connection, command, database=None):
     command = command.strip()
     if not command:
         raise DatabaseClientError('请输入要执行的命令')
     try:
         if connection.type in ('mysql', 'mariadb'):
-            with closing(_mysql(connection)) as client:
+            with closing(_mysql(connection, database=database)) as client:
                 return _dbapi_execute(client, command)
         if connection.type == 'postgresql':
             with closing(_postgresql(connection)) as client:

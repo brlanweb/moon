@@ -145,6 +145,12 @@ def run_command(request):
     form, error = JsonParser(
         Argument('id', type=int, help='请指定数据库连接'),
         Argument('command', help='请输入要执行的命令'),
+        Argument(
+            'database',
+            required=False,
+            filter=lambda value: isinstance(value, str) and 0 < len(value.strip()) <= 128,
+            help='数据库名称必须为 1～128 个非空白字符',
+        ),
         Argument('confirmation_token', required=False),
     ).parse(request.body)
     if error:
@@ -152,12 +158,15 @@ def run_command(request):
     item = DatabaseConnection.objects.filter(pk=form.id).first()
     if not item:
         return json_response(error='数据库连接不存在')
+    request_database = form.database if item.type in ('mysql', 'mariadb') else None
+    execution_database = request_database if request_database is not None else item.database
     try:
         decision = enforce_command_policy(
             item,
             request.user.id,
             form.command,
             confirmation_token=form.confirmation_token,
+            database=execution_database,
         )
         if decision.requires_confirmation:
             return json_response({
@@ -165,7 +174,9 @@ def run_command(request):
                 'confirmation_token': decision.confirmation_token,
                 'statement_types': list(decision.statement_types),
             })
-        return json_response(execute(item, form.command))
+        return json_response(execute(
+            item, form.command, database=request_database,
+        ))
     except PolicyViolation as exc:
         return json_response(error=str(exc))
     except DatabaseClientError as exc:

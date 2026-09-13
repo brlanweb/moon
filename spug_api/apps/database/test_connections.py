@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 from django.test import RequestFactory, SimpleTestCase
 
 from apps.database.client import (
-    _clickhouse, _mysql, _postgresql, _redis, test_connection,
+    _clickhouse, _mysql, _postgresql, _redis, execute, test_connection,
 )
 from apps.database.models import DatabaseConnection
 from apps.database.views import (
@@ -185,9 +185,30 @@ class DriverTimeoutTests(SimpleTestCase):
         _mysql(self.connection('mysql'))
 
         kwargs = connect.call_args.kwargs
+        self.assertEqual(kwargs['database'], 'operations')
         self.assertEqual(kwargs['connect_timeout'], 17)
         self.assertEqual(kwargs['read_timeout'], 83)
         self.assertEqual(kwargs['write_timeout'], 83)
+
+    @patch('pymysql.connect')
+    def test_mysql_receives_request_database_override(self, connect):
+        connection = self.connection('mysql')
+
+        _mysql(connection, database='analytics')
+
+        self.assertEqual(connect.call_args.kwargs['database'], 'analytics')
+        self.assertEqual(connection.database, 'operations')
+
+    @patch('apps.database.client._dbapi_execute', return_value={'rows': []})
+    @patch('apps.database.client._mysql')
+    def test_mysql_execute_without_override_uses_configured_database(self, mysql, dbapi_execute):
+        connection = self.connection('mysql')
+        mysql.return_value = MagicMock()
+
+        execute(connection, 'SELECT * FROM users')
+
+        mysql.assert_called_once_with(connection, database=None)
+        self.assertEqual(connection.database, 'operations')
 
     @patch('psycopg.connect')
     def test_postgresql_receives_connection_timeouts(self, connect):
@@ -231,15 +252,18 @@ class RunCommandPolicyTests(SimpleTestCase):
         self.connection = SimpleNamespace(
             id=23,
             type='mysql',
+            database='operations',
             read_only=False,
             environment='production',
         )
         self.user = SimpleNamespace(id=7, has_perms=lambda _perms: True)
 
-    def request(self, command, confirmation_token=None):
+    def request(self, command, confirmation_token=None, database=None, include_database=False):
         payload = {'id': self.connection.id, 'command': command}
         if confirmation_token is not None:
             payload['confirmation_token'] = confirmation_token
+        if include_database:
+            payload['database'] = database
         request = RequestFactory().post(
             '/api/database/execute/',
             data=json.dumps(payload),
@@ -276,7 +300,73 @@ class RunCommandPolicyTests(SimpleTestCase):
         payload = json.loads(response.content)
         self.assertFalse(payload['error'])
         self.assertEqual(payload['data'], {'rows': [], 'affected': 1})
-        execute_command.assert_called_once_with(self.connection, command)
+        execute_command.assert_called_once_with(self.connection, command, database=None)
+
+    @patch('apps.database.views.execute', return_value={'rows': [], 'affected': 0})
+    @patch('apps.database.views.DatabaseConnection.objects.filter')
+    def test_mysql_request_database_overrides_without_mutating_connection(
+            self, connections, execute_command):
+        self.connection.environment = 'normal'
+        connections.return_value.first.return_value = self.connection
+
+        response = run_command(self.request(
+            'SELECT * FROM users', database='analytics', include_database=True))
+
+        payload = json.loads(response.content)
+        self.assertFalse(payload['error'])
+        execute_command.assert_called_once_with(
+            self.connection, 'SELECT * FROM users', database='analytics')
+        self.assertEqual(self.connection.database, 'operations')
+
+    @patch('apps.database.views.execute', return_value={'rows': [], 'affected': 0})
+    @patch('apps.database.views.DatabaseConnection.objects.filter')
+    def test_non_mysql_request_database_does_not_override_connection(
+            self, connections, execute_command):
+        self.connection.type = 'postgresql'
+        self.connection.environment = 'normal'
+        connections.return_value.first.return_value = self.connection
+
+        response = run_command(self.request(
+            'SELECT * FROM users', database='analytics', include_database=True))
+
+        payload = json.loads(response.content)
+        self.assertFalse(payload['error'])
+        execute_command.assert_called_once_with(
+            self.connection, 'SELECT * FROM users', database=None)
+
+    @patch('apps.database.views.execute', return_value={})
+    @patch('apps.database.views.DatabaseConnection.objects.filter')
+    def test_request_database_rejects_blank_and_overlong_values(
+            self, connections, execute_command):
+        connections.return_value.first.return_value = self.connection
+
+        for database in ('   ', 'a' * 129):
+            with self.subTest(database=database):
+                response = run_command(self.request(
+                    'SELECT 1', database=database, include_database=True))
+                payload = json.loads(response.content)
+                self.assertEqual(payload['error'], '数据库名称必须为 1～128 个非空白字符')
+        execute_command.assert_not_called()
+
+    @patch('apps.database.views.execute')
+    @patch('apps.database.views.DatabaseConnection.objects.filter')
+    def test_confirmation_token_cannot_be_replayed_for_another_database(
+            self, connections, execute_command):
+        connections.return_value.first.return_value = self.connection
+        command = 'DELETE FROM users WHERE id = 3'
+        challenge = json.loads(run_command(self.request(
+            command, database='analytics', include_database=True)).content)['data']
+
+        response = run_command(self.request(
+            command,
+            challenge['confirmation_token'],
+            database='archive',
+            include_database=True,
+        ))
+
+        payload = json.loads(response.content)
+        self.assertEqual(payload['error'], '确认令牌无效或已过期')
+        execute_command.assert_not_called()
 
     @patch('apps.database.views.execute')
     @patch('apps.database.views.DatabaseConnection.objects.filter')
