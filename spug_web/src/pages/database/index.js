@@ -46,10 +46,13 @@ export default function DatabaseConsole() {
   const [record, setRecord] = useState({});
   const connectionsRef = useRef(connections);
   const tabsRef = useRef(tabs);
+  const activeIdRef = useRef(activeId);
   const lastActivityRef = useRef({});
+  const requestGenerationRef = useRef({});
 
   connectionsRef.current = connections;
   tabsRef.current = tabs;
+  activeIdRef.current = activeId;
 
   useEffect(() => {
     document.title = 'Moon database console';
@@ -75,14 +78,31 @@ export default function DatabaseConsole() {
     lastActivityRef.current[id] = Date.now();
   }
 
-  function disconnectConnection(id) {
+  function nextRequestGeneration(id) {
+    const generation = (requestGenerationRef.current[id] || 0) + 1;
+    requestGenerationRef.current[id] = generation;
+    return generation;
+  }
+
+  function tabStateAfterClose(id) {
     const currentTabs = tabsRef.current;
     const index = currentTabs.indexOf(id);
     const nextTabs = currentTabs.filter(item => item !== id);
+    const nextActive = activeIdRef.current === id ? nextTabs[index] || nextTabs[index - 1] : activeIdRef.current;
+    return {nextTabs, nextActive};
+  }
+
+  function disconnectConnection(id) {
+    nextRequestGeneration(id);
+    const {nextTabs, nextActive} = tabStateAfterClose(id);
+    const activeChanged = activeIdRef.current === id;
     tabsRef.current = nextTabs;
+    activeIdRef.current = nextActive;
     delete lastActivityRef.current[id];
-    setTabs(current => current.filter(item => item !== id));
-    setActiveId(active => active === id ? nextTabs[index] || nextTabs[index - 1] : active);
+    if (activeChanged && nextActive !== undefined) markActivity(nextActive);
+    setTabs(nextTabs);
+    setActiveId(nextActive);
+    setConnectingId(current => current === id ? undefined : current);
     setMetadata(current => {
       const next = {...current};
       delete next[id];
@@ -151,6 +171,7 @@ export default function DatabaseConsole() {
 
   function openConnection(item, refresh = false) {
     if (!item) return;
+    const generation = nextRequestGeneration(item.id);
     const nodeKey = `connection-${item.id}`;
     const activate = () => {
       markActivity(item.id);
@@ -165,11 +186,16 @@ export default function DatabaseConsole() {
     setConnectingId(item.id);
     http.get('/api/database/metadata/', {params: {id: item.id}})
       .then(data => {
+        if (requestGenerationRef.current[item.id] !== generation) return;
         setMetadata(current => ({...current, [item.id]: data}));
         activate();
         if (data.truncated) message.warning(t('对象较多，目录仅展示前 5000 项'));
       })
-      .finally(() => setConnectingId(undefined));
+      .finally(() => {
+        if (requestGenerationRef.current[item.id] === generation) {
+          setConnectingId(current => current === item.id ? undefined : current);
+        }
+      });
   }
 
   function selectNode(_, info) {
@@ -193,10 +219,13 @@ export default function DatabaseConsole() {
   }
 
   function closeTab(targetId) {
-    const index = tabs.indexOf(targetId);
-    const next = tabs.filter(id => id !== targetId);
-    setTabs(next);
-    if (activeId === targetId) setActiveId(next[index] || next[index - 1]);
+    const {nextTabs, nextActive} = tabStateAfterClose(targetId);
+    const activeChanged = activeIdRef.current === targetId;
+    tabsRef.current = nextTabs;
+    activeIdRef.current = nextActive;
+    if (activeChanged && nextActive !== undefined) markActivity(nextActive);
+    setTabs(nextTabs);
+    setActiveId(nextActive);
   }
 
   const filteredConnections = useMemo(

@@ -72,6 +72,16 @@ const METADATA = {
 
 let root;
 
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return {promise, resolve, reject};
+}
+
 async function flush() {
   await act(async () => {
     await Promise.resolve();
@@ -177,6 +187,66 @@ test('closing a tab keeps metadata cached while disconnecting clears it', async 
   expect(http.get.mock.calls.filter(([url]) => url === '/api/database/metadata/')).toHaveLength(2);
 });
 
+test('manual disconnect invalidates pending metadata before a new explicit open', async () => {
+  const staleRequest = deferred();
+  const freshRequest = deferred();
+  await renderConsole();
+  http.get.mockImplementationOnce(() => Promise.resolve(METADATA))
+    .mockImplementationOnce(() => staleRequest.promise)
+    .mockImplementationOnce(() => freshRequest.promise);
+  await openConnection('主库');
+
+  act(() => findText('button', '刷新目录').click());
+  await disconnect('主库');
+  act(() => findText('.ant-tree-title', '主库').closest('.ant-tree-node-content-wrapper').click());
+
+  await act(async () => {
+    staleRequest.resolve({groups: [{name: 'stale', items: ['old_table']}], truncated: false});
+    await Promise.resolve();
+  });
+  expect(findText('.ant-tabs-tab', '主库')).toBeUndefined();
+  expect(findText('.ant-tree-title', 'stale')).toBeUndefined();
+
+  await act(async () => {
+    freshRequest.resolve({groups: [{name: 'fresh', items: ['new_table']}], truncated: false});
+    await Promise.resolve();
+  });
+  await flush();
+  expect(findText('.ant-tabs-tab', '主库')).not.toBeUndefined();
+  expect(findText('.ant-tree-title', 'fresh')).not.toBeUndefined();
+  expect(findText('.ant-tree-title', 'stale')).toBeUndefined();
+});
+
+test('automatic disconnect invalidates pending metadata response', async () => {
+  jest.useFakeTimers();
+  const now = jest.spyOn(Date, 'now').mockReturnValue(0);
+  const pendingRequest = deferred();
+  const info = jest.spyOn(message, 'info').mockImplementation(() => {});
+  try {
+    await renderConsole();
+    http.get.mockImplementationOnce(() => Promise.resolve(METADATA))
+      .mockImplementationOnce(() => pendingRequest.promise);
+    await openConnection('主库');
+    act(() => findText('button', '刷新目录').click());
+
+    now.mockReturnValue(60000);
+    act(() => jest.advanceTimersByTime(60000));
+    await flush();
+    expect(findText('.ant-tabs-tab', '主库')).toBeUndefined();
+    expect(document.querySelector('.ant-spin-spinning')).toBeNull();
+
+    await act(async () => {
+      pendingRequest.resolve({groups: [{name: 'stale', items: ['old_table']}], truncated: false});
+      await Promise.resolve();
+    });
+    expect(findText('.ant-tabs-tab', '主库')).toBeUndefined();
+    expect(findText('.ant-tree-title', 'stale')).toBeUndefined();
+  } finally {
+    now.mockRestore();
+    info.mockRestore();
+  }
+});
+
 test('manual disconnect removes the connection from idle tracking', async () => {
   jest.useFakeTimers();
   const now = jest.spyOn(Date, 'now').mockReturnValue(0);
@@ -259,6 +329,53 @@ test('switching tabs refreshes only the selected connection activity', async () 
 
     expect(findText('.ant-tabs-tab', '主库')).not.toBeUndefined();
     expect(findText('.ant-tabs-tab', '报表库')).toBeUndefined();
+  } finally {
+    now.mockRestore();
+    info.mockRestore();
+  }
+});
+
+test('closing the active tab refreshes the automatically selected neighbor', async () => {
+  jest.useFakeTimers();
+  const now = jest.spyOn(Date, 'now').mockReturnValue(0);
+  const info = jest.spyOn(message, 'info').mockImplementation(() => {});
+  try {
+    await renderConsole();
+    await openConnection('主库');
+    await openConnection('报表库');
+
+    now.mockReturnValue(45000);
+    act(() => jest.advanceTimersByTime(45000));
+    act(() => document.querySelector('.ant-tabs-tab-active .ant-tabs-tab-remove').click());
+    await flush();
+
+    now.mockReturnValue(90000);
+    act(() => jest.advanceTimersByTime(45000));
+    await flush();
+    expect(findText('.ant-tabs-tab', '主库')).not.toBeUndefined();
+  } finally {
+    now.mockRestore();
+    info.mockRestore();
+  }
+});
+
+test('disconnecting the active tab refreshes the automatically selected neighbor', async () => {
+  jest.useFakeTimers();
+  const now = jest.spyOn(Date, 'now').mockReturnValue(0);
+  const info = jest.spyOn(message, 'info').mockImplementation(() => {});
+  try {
+    await renderConsole();
+    await openConnection('主库');
+    await openConnection('报表库');
+
+    now.mockReturnValue(45000);
+    act(() => jest.advanceTimersByTime(45000));
+    await disconnect('报表库');
+
+    now.mockReturnValue(90000);
+    act(() => jest.advanceTimersByTime(45000));
+    await flush();
+    expect(findText('.ant-tabs-tab', '主库')).not.toBeUndefined();
   } finally {
     now.mockRestore();
     info.mockRestore();
