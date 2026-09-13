@@ -104,7 +104,7 @@ test('shows a dangerous production confirmation without treating the challenge a
     execution_id: expect.any(String),
     command: "UPDATE orders SET status = 'paid' WHERE id = 42;",
     database: 'tenant_42',
-  }, {timeout: 155000});
+  }, {timeout: 155000, executionProtocol: true});
   const modal = document.querySelector('.ant-modal');
   expect(modal).not.toBeNull();
   expect(modal.textContent).toContain('生产订单库');
@@ -157,7 +157,7 @@ test('confirms by retrying the identical execution with the challenge token and 
     command: "UPDATE orders SET status = 'paid' WHERE id = 42;",
     database: 'tenant_42',
     confirmation_token: 'signed-token',
-  }, {timeout: 155000});
+  }, {timeout: 155000, executionProtocol: true});
   expect(document.body.textContent).toContain('影响行数: 1');
 });
 
@@ -207,7 +207,7 @@ test.each([1, undefined])('keeps the legacy request timeout floor for query_time
   act(() => button('运行').click());
   await flush();
 
-  expect(http.post).toHaveBeenCalledWith('/api/database/execute/', expect.any(Object), {timeout: 45000});
+  expect(http.post).toHaveBeenCalledWith('/api/database/execute/', expect.any(Object), {timeout: 45000, executionProtocol: true});
 });
 
 test('keeps rendering ordinary query responses', async () => {
@@ -234,7 +234,7 @@ test('stop only requests cancellation and keeps the execution locked until ackno
   await flush();
   expect(http.post).toHaveBeenLastCalledWith('/api/database/cancel/', {
     id: 7, execution_id: payload.execution_id,
-  });
+  }, {executionProtocol: true});
   expect(button('正在中断')).toBeDefined();
   act(() => button('运行').click());
   expect(http.post).toHaveBeenCalledTimes(2);

@@ -12,11 +12,16 @@ import { message } from 'antd';
 // response处理
 function handleResponse(response) {
   let result;
-  if (response.status === 401) {
+  const malformedExecution = response.config?.executionProtocol && response.status === 200 &&
+    (!response.data || typeof response.data !== 'object' ||
+      (!response.data.error && (!response.data.data || typeof response.data.data !== 'object')));
+  if (malformedExecution) {
+    result = t('无效的数据格式');
+  } else if (response.status === 401) {
     result = t('会话过期，请重新登录');
     if (history.location.pathname !== '/') {
       history.push('/', {from: history.location})
-    } else {
+    } else if (!response.config?.executionProtocol) {
       return Promise.reject()
     }
   } else if (response.status === 200) {
@@ -35,6 +40,13 @@ function handleResponse(response) {
     result = t('请求失败: {}', `${response.status} ${response.statusText}`)
   }
   message.error(result);
+  if (response.config?.executionProtocol) {
+    // Opt-in only: ordinary pages retain their existing string rejection contract.
+    const admissionRejected = [400, 401, 403, 404, 405, 413, 415, 422, 429].includes(response.status);
+    return Promise.reject({message: result, responseReceived: true,
+      executionStatus: response.data?.execution_status ||
+        (admissionRejected && response.config.url === '/api/database/execute/' ? 'not_started' : 'unavailable')});
+  }
   return Promise.reject(result)
 }
 
@@ -58,6 +70,10 @@ http.interceptors.response.use(response => {
   }
   const result = t('请求异常: {}', error.message);
   message.error(result);
+  if (error.config?.executionProtocol) {
+    return Promise.reject({message: result, networkUncertain: Boolean(error.request) ||
+      ['ECONNABORTED', 'ETIMEDOUT', 'ERR_NETWORK'].includes(error.code)});
+  }
   return Promise.reject(result)
 });
 

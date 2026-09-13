@@ -95,7 +95,7 @@ export default function QueryPanel({
     clearTimeout(pollRef.current);
     pollRef.current = setTimeout(() => {
       if (!mountedRef.current || executionRef.current !== payload || !runningRef.current) return;
-      http.get('/api/database/cancel/', {params: {id: payload.id, execution_id: payload.execution_id}})
+      http.get('/api/database/cancel/', {executionProtocol: true, params: {id: payload.id, execution_id: payload.execution_id}})
         .then(data => {
           if (!mountedRef.current || executionRef.current !== payload || !runningRef.current) return;
           if (recover && ['completed', 'cancelled', 'failed'].includes(data.status)) {
@@ -106,11 +106,13 @@ export default function QueryPanel({
           }
           if (cancelFeedback(data) || recover) poll(payload, recover);
         })
-        .catch(() => {
+        .catch(error => {
           if (!mountedRef.current || executionRef.current !== payload || !runningRef.current) return;
-          setFailure(t('无法确认执行状态，连接保持锁定，请重试停止'));
+          setFailure(error?.networkUncertain
+            ? t('无法确认执行状态，连接保持锁定，请重试停止')
+            : `${error?.message || t('响应无法识别')}；${t('状态查询被拒绝，已停止自动查询；连接保持锁定，请重试停止或联系管理员核实')}`);
           setStopping(false);
-          if (recover) poll(payload, true);
+          if (recover && error?.networkUncertain) poll(payload, true);
         });
     }, 600);
   }
@@ -120,7 +122,7 @@ export default function QueryPanel({
     const payload = executionRef.current;
     setStopping(true);
     setFailure(undefined);
-    http.post('/api/database/cancel/', {id: payload.id, execution_id: payload.execution_id})
+    http.post('/api/database/cancel/', {id: payload.id, execution_id: payload.execution_id}, {executionProtocol: true})
       .then(data => {
         if (!mountedRef.current || executionRef.current !== payload || !runningRef.current) return;
         if (cancelFeedback(data)) poll(payload);
@@ -135,6 +137,7 @@ export default function QueryPanel({
   function execute(payload) {
     if (runningRef.current) return Promise.resolve();
     runningRef.current = true;
+    payload = Object.freeze({...payload});
     executionRef.current = payload;
     setFailure(undefined);
     setRunning(true);
@@ -143,10 +146,17 @@ export default function QueryPanel({
       45000,
       (Number(connection.connect_timeout || 0) + Number(connection.query_timeout || 0)) * 1000 + 5000,
     );
-    return http.post('/api/database/execute/', payload, {timeout})
+    return http.post('/api/database/execute/', payload, {timeout, executionProtocol: true})
       .then(data => {
         if (!mountedRef.current) return;
+        if (data.status === 'not_started') {
+          setFailure(data.message);
+          setConfirmation(undefined);
+          release();
+          return;
+        }
         if (data.status === 'unknown') {
+          setStopping(false);
           setFailure(data.message);
           poll(payload, true);
           return;
@@ -160,8 +170,19 @@ export default function QueryPanel({
         }
         release();
       })
-      .catch(() => {
+      .catch(error => {
         if (!mountedRef.current) return;
+        setStopping(false);
+        if (error?.executionStatus === 'not_started') {
+          setFailure(error.message);
+          setConfirmation(undefined);
+          release();
+          return;
+        }
+        if (!error?.networkUncertain) {
+          setFailure(`${error?.message || t('响应无法识别')}；${t('无法确认执行结果，连接保持锁定，请重试停止')}`);
+          return;
+        }
         setFailure(t('执行响应异常，正在确认服务端状态；确认结束前保持锁定'));
         poll(payload, true);
       });
@@ -194,7 +215,9 @@ export default function QueryPanel({
   function confirmExecution() {
     if (!confirmation || runningRef.current) return;
     if (onActivity) onActivity();
-    execute({...confirmation.payload, confirmation_token: confirmation.token});
+    const payload = {...confirmation.payload, confirmation_token: confirmation.token};
+    setConfirmation(undefined);
+    execute(payload);
   }
 
   function clear() {

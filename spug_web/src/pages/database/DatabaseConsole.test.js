@@ -443,7 +443,7 @@ test('clicking run refreshes query activity', async () => {
       execution_id: expect.any(String),
       command: 'SELECT VERSION();',
       database: 'public',
-    }, {timeout: 45000});
+    }, {timeout: 45000, executionProtocol: true});
   } finally {
     now.mockRestore();
     info.mockRestore();
@@ -464,7 +464,7 @@ test('uses the configured MySQL database before the first metadata group', async
     execution_id: expect.any(String),
     command: 'SELECT VERSION();',
     database: 'operations',
-  }, {timeout: 45000});
+  }, {timeout: 45000, executionProtocol: true});
 });
 
 test('switches the active MySQL database when selecting a group or table', async () => {
@@ -483,7 +483,7 @@ test('switches the active MySQL database when selecting a group or table', async
     execution_id: expect.any(String),
     command: 'SELECT VERSION();',
     database: 'analytics',
-  }, {timeout: 45000});
+  }, {timeout: 45000, executionProtocol: true});
 
   const publicGroup = findText('.ant-tree-title', 'public');
   act(() => publicGroup.closest('.ant-tree-treenode')
@@ -558,7 +558,7 @@ test.each([
     execution_id: expect.any(String),
     database: 'public',
     command,
-  }, {timeout: 45000});
+  }, {timeout: 45000, executionProtocol: true});
 });
 
 test('closing a tab preserves the active database while disconnecting clears it', async () => {

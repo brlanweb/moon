@@ -1,4 +1,6 @@
 import time
+import json
+from functools import wraps
 from uuid import uuid4
 
 from django.db import transaction
@@ -158,16 +160,49 @@ def get_metadata(request):
         return json_response(error=f'连接失败: {exc}')
 
 
-@auth('database.query.do')
+def _execution_api(rejection_status):
+    """Keep legacy error envelopes while identifying known request rejections.
+
+    Only explicit error responses are annotated; unexpected exceptions never imply
+    that the database did not execute. Authentication middleware's HTTP 401 is
+    handled separately by the opt-in HTTP client protocol.
+    """
+    def decorate(view):
+        authorized = auth('database.query.do')(view)
+
+        @wraps(view)
+        def wrapper(request):
+            if request.method != 'GET':
+                try:
+                    body = json.loads(request.body or b'{}')
+                    if not isinstance(body, dict):
+                        raise ValueError
+                except (ValueError, UnicodeDecodeError):
+                    response = json_response(error='请求参数必须为 JSON 对象')
+                else:
+                    response = authorized(request)
+            else:
+                response = authorized(request)
+            body = json.loads(response.content)
+            if body.get('error'):
+                body['execution_status'] = getattr(response, 'execution_status', rejection_status)
+                response.content = json.dumps(body, ensure_ascii=False).encode()
+            return response
+        return wrapper
+    return decorate
+
+
+@_execution_api('not_started')
 def run_command(request):
     if not request.user.has_perms(['database.connection.view']):
         return json_response(error='权限拒绝')
     form, error = JsonParser(
         Argument('id', type=int, help='请指定数据库连接'),
-        Argument('command', help='请输入要执行的命令'),
+        Argument('command', filter=lambda x: isinstance(x, str) and bool(x.strip()),
+                 help='请输入要执行的命令'),
         Argument('database', required=False),
-        Argument('confirmation_token', required=False),
-        Argument('execution_id', required=False),
+        Argument('confirmation_token', required=False, filter=lambda x: x is None or isinstance(x, str)),
+        Argument('execution_id', required=False, filter=lambda x: x is None or isinstance(x, str)),
     ).parse(request.body)
     if error:
         return json_response(error=error)
@@ -204,27 +239,40 @@ def run_command(request):
             })
         if not registry.begin():
             return json_response(cancelled_result())
-        try:
-            result = execute(item, form.command, database=request_database, registry=registry)
-            registry.finish('cancelled' if result.get('status') == 'cancelled' else 'completed')
-            return json_response(result)
-        except Exception as exc:
-            if getattr(exc, 'execution_uncertain', False):
-                registry.update(cancel_status='failed', cancel_error='工作连接丢失，无法确认服务端执行结果')
-                return json_response({'status': 'unknown', 'message': '工作连接丢失，无法确认服务端执行结果，连接保持锁定'})
-            registry.finish('failed')
-            raise
     except (PolicyViolation, ExecutionError) as exc:
-        if form.execution_id:
-            return json_response({'status': 'failed', 'message': str(exc)})
         return json_response(error=str(exc))
-    except DatabaseClientError as exc:
-        if form.execution_id:
-            return json_response({'status': 'failed', 'message': f'执行失败: {exc}'})
-        return json_response(error=f'执行失败: {exc}')
+    except Exception:
+        # This boundary contains no database command dispatch, including when
+        # confirmation-token storage is unavailable.
+        return json_response(error='执行前检查失败，请稍后重试')
+
+    # Admission is complete. Errors below must never be labelled not_started.
+    try:
+        result = execute(item, form.command, database=request_database, registry=registry)
+        registry.finish('cancelled' if result.get('status') == 'cancelled' else 'completed')
+        return json_response(result)
+    except Exception as exc:
+        if getattr(exc, 'execution_uncertain', False) or isinstance(exc, ExecutionError):
+            # Registry/transport failure cannot establish a terminal server state.
+            try:
+                registry.update(cancel_status='failed', cancel_error='无法确认执行结果，可重试停止')
+            except ExecutionError:
+                pass
+            return json_response({'status': 'unknown', 'message': '无法确认服务端执行结果，连接保持锁定'})
+        try:
+            registry.finish('failed')
+        except ExecutionError:
+            return json_response({'status': 'unknown', 'message': '无法确认服务端执行结果，连接保持锁定'})
+        if isinstance(exc, DatabaseClientError):
+            if form.execution_id:
+                return json_response({'status': 'failed', 'message': f'执行失败: {exc}'})
+            response = json_response(error=f'执行失败: {exc}')
+            response.execution_status = 'failed'
+            return response
+        raise
 
 
-@auth('database.query.do')
+@_execution_api('unavailable')
 def cancel_command(request):
     if not request.user.has_perms(['database.connection.view']):
         return json_response(error='权限拒绝')

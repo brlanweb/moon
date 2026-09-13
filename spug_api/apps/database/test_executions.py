@@ -252,9 +252,9 @@ class LocalApiCancellationIntegrationTests(LocalConnectionMixin, SimpleTestCase)
             cancel_command(req)
             result = json.loads(run_command(req).content)['data']
             self.assertEqual(result['status'], 'cancelled')
-            replay = json.loads(run_command(req).content)['data']
-            self.assertEqual(replay['status'], 'failed')
-            self.assertIn('已使用', replay['message'])
+            replay = json.loads(run_command(req).content)
+            self.assertEqual(replay['execution_status'], 'not_started')
+            self.assertIn('已使用', replay['error'])
 
 
 class ClickHouseInterruptionTests(SimpleTestCase):
