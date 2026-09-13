@@ -50,6 +50,7 @@ export default function DatabaseConsole() {
   const activeIdRef = useRef(activeId);
   const lastActivityRef = useRef({});
   const inFlightQueriesRef = useRef({});
+  const busyRef = useRef({});
   const sessionGenerationRef = useRef({});
   const requestGenerationRef = useRef({});
   const selectionGenerationRef = useRef({});
@@ -71,7 +72,7 @@ export default function DatabaseConsole() {
         const timeout = Number(item.idle_timeout);
         const lastActivity = lastActivityRef.current[item.id];
         const runningQueries = inFlightQueriesRef.current[item.id] || 0;
-        if (timeout > 0 && runningQueries === 0 && lastActivity !== undefined &&
+        if (timeout > 0 && runningQueries === 0 && !busyRef.current[item.id] && lastActivity !== undefined &&
             now - lastActivity >= timeout * 60 * 1000) {
           disconnectConnectionRef.current(item.id);
           message.info(t('连接【{}】因空闲已断开', item.name));
@@ -103,21 +104,24 @@ export default function DatabaseConsole() {
     markActivity(id);
   }
 
-  function isMySQLConnection(item) {
-    return item.type === 'mysql' || item.type === 'mariadb';
-  }
-
   function initializeActiveDatabase(item, data) {
-    if (!isMySQLConnection(item)) return;
-    const database = item.database || data.groups?.[0]?.name;
-    if (!database) return;
-    setActiveDatabases(current => ({...current, [item.id]: database}));
+    if (busyRef.current[item.id] || inFlightQueriesRef.current[item.id]) return;
+    const names = (data.groups || []).map(group => group.name);
+    const database = item.type === 'redis' ? `DB ${item.database || 0}`
+      : item.type === 'postgresql' ? (names.includes('public') ? 'public' : names[0])
+      : item.database || names[0];
+    if (database) setActiveDatabases(current => ({...current, [item.id]: current[item.id] || database}));
   }
 
   function selectActiveDatabase(item, database) {
-    if (!isMySQLConnection(item)) return;
+    if (busyRef.current[item.id] || inFlightQueriesRef.current[item.id]) {
+      message.warning(t('运行或确认期间不能更换执行目标'));
+      return false;
+    }
+    if (item.type === 'redis') return true;
     selectionGenerationRef.current[item.id] = (selectionGenerationRef.current[item.id] || 0) + 1;
     setActiveDatabases(current => ({...current, [item.id]: database}));
+    return true;
   }
 
   function nextRequestGeneration(id) {
@@ -135,6 +139,11 @@ export default function DatabaseConsole() {
   }
 
   function disconnectConnection(id) {
+    if (busyRef.current[id] || inFlightQueriesRef.current[id]) {
+      message.warning(t('请先停止查询或取消确认，等待执行结束后断开'));
+      return;
+    }
+    delete busyRef.current[id];
     nextSessionGeneration(id);
     nextRequestGeneration(id);
     const {nextTabs, nextActive} = tabStateAfterClose(id);
@@ -184,6 +193,10 @@ export default function DatabaseConsole() {
   }
 
   function removeConnection(item) {
+    if (busyRef.current[item.id] || inFlightQueriesRef.current[item.id]) {
+      message.warning(t('请先停止查询或取消确认'));
+      return;
+    }
     Modal.confirm({
       title: t('删除数据库连接'),
       content: t('确定删除连接【{}】？', item.name),
@@ -213,7 +226,7 @@ export default function DatabaseConsole() {
       onClick: ({key, domEvent}) => {
         domEvent.stopPropagation();
         if (key === 'disconnect') disconnectConnection(item.id);
-        if (key === 'edit') openForm(item);
+        if (key === 'edit' && !busyRef.current[item.id] && !inFlightQueriesRef.current[item.id]) openForm(item);
         if (key === 'delete') removeConnection(item);
       },
     };
@@ -275,7 +288,7 @@ export default function DatabaseConsole() {
     }
     if (node.kind === 'table') {
       openConnection(item);
-      selectActiveDatabase(item, node.namespace);
+      if (!selectActiveDatabase(item, node.namespace)) return;
       let command;
       if (item.type === 'redis') {
         command = `TYPE ${JSON.stringify(node.item)}`;
@@ -287,6 +300,10 @@ export default function DatabaseConsole() {
   }
 
   function closeTab(targetId) {
+    if (busyRef.current[targetId] || inFlightQueriesRef.current[targetId]) {
+      message.warning(t('请先停止查询或取消确认，等待执行结束后关闭'));
+      return;
+    }
     const {nextTabs, nextActive} = tabStateAfterClose(targetId);
     const activeChanged = activeIdRef.current === targetId;
     tabsRef.current = nextTabs;
@@ -350,8 +367,13 @@ export default function DatabaseConsole() {
       label: item.name,
       children: (
         <QueryPanel
+          key={`${id}-${sessionGeneration}`}
           connection={item}
-          activeDatabase={activeDatabases[id] || item.database}
+          activeDatabase={activeDatabases[id] || (item.type !== 'postgresql' ? item.database : undefined)}
+          databases={(metadata[id]?.groups || []).map(group => group.name)}
+          onDatabaseChange={database => selectActiveDatabase(item, database)}
+          onDisconnect={() => disconnectConnection(id)}
+          onBusyChange={busy => { busyRef.current[id] = busy; }}
           command={commands[id]}
           onActivity={() => markActivity(id)}
           onRunningChange={running => updateQueryRunning(id, sessionGeneration, running)}
@@ -384,6 +406,14 @@ export default function DatabaseConsole() {
         <Spin spinning={fetching || Boolean(connectingId)} wrapperClassName={styles.tree}>
           {treeData.length ? (
             <Tree showIcon blockNode treeData={treeData} onSelect={selectNode}
+                  selectedKeys={treeData.flatMap(connection => connection.children
+                    .filter(group => group.connectionId === activeId && group.namespace === activeDatabases[activeId])
+                    .map(group => group.key))}
+                  onDoubleClick={(event, node) => {
+                    selectNode([], {node});
+                    if (node.kind !== 'table') setExpandedKeys(current =>
+                      current.includes(node.key) ? current : [...current, node.key]);
+                  }}
                   expandedKeys={expandedKeys} onExpand={setExpandedKeys}/>
           ) : (
             <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('暂无数据库连接')}/>

@@ -145,6 +145,7 @@ async function disconnect(name) {
 }
 
 beforeEach(() => {
+  Object.defineProperty(window, 'crypto', {configurable: true, value: require('crypto').webcrypto});
   jest.clearAllMocks();
   jest.useRealTimers();
   mockPermissions = new Set(['database.connection.view', 'database.query.do']);
@@ -439,6 +440,7 @@ test('clicking run refreshes query activity', async () => {
     expect(findText('.ant-tabs-tab', '主库')).not.toBeUndefined();
     expect(http.post).toHaveBeenCalledWith('/api/database/execute/', {
       id: 1,
+      execution_id: expect.any(String),
       command: 'SELECT VERSION();',
       database: 'public',
     }, {timeout: 45000});
@@ -459,6 +461,7 @@ test('uses the configured MySQL database before the first metadata group', async
 
   expect(http.post).toHaveBeenCalledWith('/api/database/execute/', {
     id: 1,
+    execution_id: expect.any(String),
     command: 'SELECT VERSION();',
     database: 'operations',
   }, {timeout: 45000});
@@ -477,6 +480,7 @@ test('switches the active MySQL database when selecting a group or table', async
   await flush();
   expect(http.post).toHaveBeenLastCalledWith('/api/database/execute/', {
     id: 1,
+    execution_id: expect.any(String),
     command: 'SELECT VERSION();',
     database: 'analytics',
   }, {timeout: 45000});
@@ -492,7 +496,7 @@ test('switches the active MySQL database when selecting a group or table', async
     .toContain('/ public');
 });
 
-test('metadata refresh restores the configured MySQL database', async () => {
+test('metadata refresh preserves the selected MySQL database', async () => {
   await renderConsole([{...CONNECTIONS[0], database: 'operations'}]);
   await openConnection('主库');
   act(() => findText('.ant-tree-title', 'analytics')
@@ -505,7 +509,7 @@ test('metadata refresh restores the configured MySQL database', async () => {
   await flush();
 
   expect(document.querySelector('.ant-tabs-tabpane-active').textContent)
-    .toContain('/ operations');
+    .toContain('/ analytics');
 });
 
 test.each([
@@ -542,7 +546,7 @@ test.each([
 test.each([
   ['报表库', 2, 'SELECT version();'],
   ['分析库', 3, 'SELECT version();'],
-])('does not send an empty database override for %s', async (name, id, command) => {
+])('sends the selected database or schema for %s', async (name, id, command) => {
   await renderConsole();
   await openConnection(name);
 
@@ -551,6 +555,8 @@ test.each([
 
   expect(http.post).toHaveBeenLastCalledWith('/api/database/execute/', {
     id,
+    execution_id: expect.any(String),
+    database: 'public',
     command,
   }, {timeout: 45000});
 });
@@ -668,84 +674,43 @@ test('idle cleanup skips a running query and restarts the idle clock after compl
   }
 });
 
-test('a stale query completion cannot reduce the reconnected session running count', async () => {
-  jest.useFakeTimers();
-  const now = jest.spyOn(Date, 'now').mockReturnValue(0);
-  const staleQuery = deferred();
-  const currentQuery = deferred();
-  const info = jest.spyOn(message, 'info').mockImplementation(() => {});
-  const error = jest.spyOn(console, 'error').mockImplementation(() => {});
-  try {
-    await renderConsole();
-    await openConnection('主库');
-    http.post.mockReturnValueOnce(staleQuery.promise).mockReturnValueOnce(currentQuery.promise);
-
-    act(() => findText('.ant-tabs-tabpane-active button', '运行').click());
-    await disconnect('主库');
-    now.mockReturnValue(1000);
-    await openConnection('主库');
-    act(() => findText('.ant-tabs-tabpane-active button', '运行').click());
-
-    now.mockReturnValue(60000);
-    await act(async () => {
-      staleQuery.resolve({columns: ['stale'], rows: [[1]], affected: 0, elapsed: 60000});
-      await staleQuery.promise;
-    });
-    now.mockReturnValue(121000);
-    act(() => jest.advanceTimersByTime(121000));
-    await flush();
-
-    expect(findText('.ant-tabs-tab', '主库')).not.toBeUndefined();
-    expect(info).not.toHaveBeenCalled();
-    expect(error).not.toHaveBeenCalled();
-  } finally {
-    await act(async () => {
-      currentQuery.resolve({columns: ['current'], rows: [[1]], affected: 0, elapsed: 120000});
-      await currentQuery.promise;
-    });
-    now.mockRestore();
-    info.mockRestore();
-    error.mockRestore();
-  }
+test('running queries prevent disconnect, tab close, target changes and concurrent reuse', async () => {
+  const query = deferred();
+  await renderConsole();
+  await openConnection('主库');
+  http.post.mockReturnValue(query.promise);
+  act(() => findText('.ant-tabs-tabpane-active button', '运行').click());
+  await disconnect('主库');
+  act(() => root.querySelector('.ant-tabs-tab-remove').click());
+  act(() => findText('.ant-tree-title', 'analytics').click());
+  await flush();
+  expect(findText('.ant-tabs-tab', '主库')).not.toBeUndefined();
+  expect(root.querySelector('.ant-tabs-tabpane-active .ant-select-selection-item').textContent).toBe('public');
+  act(() => findText('.ant-tabs-tabpane-active button', '运行').click());
+  expect(http.post).toHaveBeenCalledTimes(1);
+  query.resolve({columns: [], rows: [], affected: 0, elapsed: 1});
+  await flush();
+  await disconnect('主库');
+  expect(findText('.ant-tabs-tab', '主库')).toBeUndefined();
 });
 
-test('a stale query completion cannot refresh the reconnected session activity time', async () => {
-  jest.useFakeTimers();
-  const now = jest.spyOn(Date, 'now').mockReturnValue(0);
-  const staleQuery = deferred();
-  const currentQuery = deferred();
-  const info = jest.spyOn(message, 'info').mockImplementation(() => {});
-  try {
-    await renderConsole();
-    await openConnection('主库');
-    http.post.mockReturnValueOnce(staleQuery.promise).mockReturnValueOnce(currentQuery.promise);
-
-    act(() => findText('.ant-tabs-tabpane-active button', '运行').click());
-    await disconnect('主库');
-    now.mockReturnValue(1000);
-    await openConnection('主库');
-    act(() => findText('.ant-tabs-tabpane-active button', '运行').click());
-    now.mockReturnValue(10000);
-    await act(async () => {
-      currentQuery.resolve({columns: ['current'], rows: [[1]], affected: 0, elapsed: 9000});
-      await currentQuery.promise;
-    });
-
-    now.mockReturnValue(60000);
-    await act(async () => {
-      staleQuery.resolve({columns: ['stale'], rows: [[1]], affected: 0, elapsed: 60000});
-      await staleQuery.promise;
-    });
-    now.mockReturnValue(71000);
-    act(() => jest.advanceTimersByTime(71000));
-    await flush();
-
-    expect(findText('.ant-tabs-tab', '主库')).toBeUndefined();
-    expect(info).toHaveBeenCalledWith('连接【主库】因空闲已断开');
-  } finally {
-    now.mockRestore();
-    info.mockRestore();
-  }
+test('a new session remains isolated after the previous query finishes and disconnects', async () => {
+  const first = deferred();
+  const second = deferred();
+  await renderConsole();
+  await openConnection('主库');
+  http.post.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+  act(() => findText('.ant-tabs-tabpane-active button', '运行').click());
+  first.resolve({columns: ['old'], rows: [[1]], affected: 0, elapsed: 1});
+  await flush();
+  await disconnect('主库');
+  await openConnection('主库');
+  expect(root.querySelector('.ant-tabs-tabpane-active').textContent).not.toContain('old');
+  act(() => findText('.ant-tabs-tabpane-active button', '运行').click());
+  expect(http.post.mock.calls[0][1].execution_id).not.toBe(http.post.mock.calls[1][1].execution_id);
+  second.resolve({columns: ['new'], rows: [[2]], affected: 0, elapsed: 1});
+  await flush();
+  expect(root.querySelector('.ant-tabs-tabpane-active').textContent).toContain('new');
 });
 
 test.each([
@@ -775,4 +740,16 @@ test('lets metadata loading honor the combined connection and query timeout', as
     params: {id: 1},
     timeout: 245000,
   });
+});
+
+test('double clicking a database expands it and synchronizes the execution Select', async () => {
+  await renderConsole();
+  act(() => findText('.ant-tree-title', '主库').click());
+  await flush();
+  const title = findText('.ant-tree-title', 'analytics');
+  act(() => Simulate.doubleClick(title));
+  await flush();
+  expect(root.textContent).toContain('daily_metrics');
+  expect(root.querySelector('.ant-tabs-tabpane-active .ant-select-selection-item').textContent).toBe('analytics');
+  expect(findText('.ant-tabs-tabpane-active button', '断开连接')).toBeDefined();
 });

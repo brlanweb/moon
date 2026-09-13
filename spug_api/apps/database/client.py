@@ -76,7 +76,7 @@ def _postgresql(connection):
     )
 
 
-def _clickhouse(connection):
+def _clickhouse(connection, database=None):
     import clickhouse_connect
 
     options = {
@@ -84,7 +84,7 @@ def _clickhouse(connection):
         'port': connection.port,
         'username': connection.username or 'default',
         'password': connection.get_password(),
-        'database': connection.database or 'default',
+        'database': (connection.database if database is None else database) or 'default',
         'secure': connection.use_ssl,
         'connect_timeout': connection.connect_timeout,
         'send_receive_timeout': connection.query_timeout,
@@ -94,18 +94,22 @@ def _clickhouse(connection):
     return clickhouse_connect.get_client(**options)
 
 
-def _redis(connection):
+def _redis(connection, dedicated=False):
     import redis
 
     try:
         db = int(connection.database or 0)
     except ValueError as exc:
         raise DatabaseClientError('Redis 数据库编号必须是整数') from exc
+    from redis.retry import Retry
+    from redis.backoff import NoBackoff
+
     return redis.Redis(
         host=connection.host, port=connection.port, db=db,
         username=connection.username or None, password=connection.get_password() or None,
         ssl=connection.use_ssl, socket_connect_timeout=connection.connect_timeout,
         socket_timeout=connection.query_timeout, decode_responses=True,
+        single_connection_client=dedicated, retry=Retry(NoBackoff(), 0),
     )
 
 
@@ -149,16 +153,17 @@ def _dbapi_execute(client, command):
                        affected=cursor.rowcount, message='执行成功')
 
 
-def _clickhouse_execute(client, command):
+def _clickhouse_execute(client, command, query_id=None):
     started = time.monotonic()
+    options = {'settings': {'query_id': query_id}} if query_id else {}
     keyword = command.lstrip().split(None, 1)[0].upper()
     if keyword in ('SELECT', 'SHOW', 'DESCRIBE', 'DESC', 'EXPLAIN', 'WITH'):
-        result = client.query(command)
+        result = client.query(command, **options)
         rows = result.result_rows
         truncated = len(rows) > ROW_LIMIT
         return _result(result.column_names, rows[:ROW_LIMIT], time.monotonic() - started,
                        truncated=truncated)
-    value = client.command(command)
+    value = client.command(command, **options)
     message = '执行成功' if value in (None, '') else str(value)
     return _result([], [], time.monotonic() - started, message=message)
 
@@ -184,10 +189,13 @@ def _redis_execute(client, command):
     return _result(['value'], [[json.dumps(value, ensure_ascii=False, default=str)]], elapsed)
 
 
-def execute(connection, command, database=None):
+def execute(connection, command, database=None, registry=None):
     command = command.strip()
     if not command:
         raise DatabaseClientError('请输入要执行的命令')
+    if registry is not None:
+        from apps.database.cancellation import execute_registered
+        return execute_registered(connection, command, database, registry)
     try:
         if connection.type in ('mysql', 'mariadb'):
             with closing(_mysql(connection, database=database)) as client:
@@ -214,28 +222,31 @@ def metadata(connection):
             with closing(_mysql(connection)) as client:
                 with client.cursor() as cursor:
                     cursor.execute("""
-                        SELECT table_schema, table_name
-                        FROM information_schema.tables
-                        WHERE table_schema NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
-                        ORDER BY table_schema, table_name
+                        SELECT s.schema_name, t.table_name
+                        FROM information_schema.schemata s
+                        LEFT JOIN information_schema.tables t ON t.table_schema = s.schema_name
+                        WHERE s.schema_name NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
+                        ORDER BY s.schema_name, t.table_name
                     """)
                     rows = cursor.fetchmany(5001)
         elif connection.type == 'postgresql':
             with closing(_postgresql(connection)) as client:
                 with client.cursor() as cursor:
                     cursor.execute("""
-                        SELECT table_schema, table_name
-                        FROM information_schema.tables
-                        WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
-                        ORDER BY table_schema, table_name
+                        SELECT s.schema_name, t.table_name
+                        FROM information_schema.schemata s
+                        LEFT JOIN information_schema.tables t ON t.table_schema = s.schema_name
+                        WHERE s.schema_name NOT IN ('pg_catalog', 'information_schema')
+                        ORDER BY s.schema_name, t.table_name
                     """)
                     rows = cursor.fetchmany(5001)
         elif connection.type == 'clickhouse':
             with closing(_clickhouse(connection)) as client:
                 rows = client.query("""
-                    SELECT database, name FROM system.tables
-                    WHERE database NOT IN ('system', 'information_schema', 'INFORMATION_SCHEMA')
-                    ORDER BY database, name LIMIT 5001
+                    SELECT d.name, nullIf(t.name, '') FROM system.databases d
+                    LEFT JOIN system.tables t ON t.database = d.name
+                    WHERE d.name NOT IN ('system', 'information_schema', 'INFORMATION_SCHEMA')
+                    ORDER BY d.name, t.name LIMIT 5001
                 """).result_rows
         elif connection.type == 'redis':
             with closing(_redis(connection)) as client:
@@ -259,7 +270,9 @@ def metadata(connection):
 
     groups = {}
     for namespace, table in rows[:5000]:
-        groups.setdefault(namespace, []).append(table)
+        items = groups.setdefault(namespace, [])
+        if table is not None:
+            items.append(table)
     return {
         'groups': [{'name': name, 'items': items} for name, items in groups.items()],
         'truncated': len(rows) > 5000,

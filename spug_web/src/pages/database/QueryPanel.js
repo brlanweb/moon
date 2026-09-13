@@ -1,10 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, Button, Empty, Modal, Space, Table, Tag, Tooltip, message } from 'antd';
+import { Alert, Button, Empty, Modal, Select, Space, Table, Tag, Tooltip, message } from 'antd';
 import {
   CaretRightOutlined,
   ClearOutlined,
   CopyOutlined,
   DownloadOutlined,
+  StopOutlined,
+  DisconnectOutlined,
 } from '@ant-design/icons';
 import { ACEditor } from 'components';
 import { hasPermission, http, t } from 'libs';
@@ -32,10 +34,19 @@ export default function QueryPanel({
   onCommandChange,
   onActivity,
   onRunningChange,
+  databases = [],
+  onDatabaseChange,
+  onDisconnect,
+  onBusyChange,
 }) {
   const editorRef = useRef();
   const mountedRef = useRef(true);
   const runningRef = useRef(false);
+  const executionRef = useRef();
+  const pollRef = useRef();
+  const recoveringRef = useRef(false);
+  const [stopping, setStopping] = useState(false);
+  const [failure, setFailure] = useState();
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState();
   const [confirmation, setConfirmation] = useState();
@@ -43,6 +54,7 @@ export default function QueryPanel({
 
   useEffect(() => () => {
     mountedRef.current = false;
+    clearTimeout(pollRef.current);
   }, []);
 
   function changeCommand(nextValue) {
@@ -55,9 +67,76 @@ export default function QueryPanel({
     return selected?.trim() || value?.trim();
   }
 
+  function release() {
+    clearTimeout(pollRef.current);
+    recoveringRef.current = false;
+    runningRef.current = false;
+    if (mountedRef.current) {
+      setRunning(false);
+      setStopping(false);
+    }
+    if (onRunningChange) onRunningChange(false);
+  }
+
+  function cancelFeedback(data) {
+    if (data.cancel_status === 'unsupported' || data.cancel_status === 'failed') {
+      setStopping(false);
+      setFailure(data.cancel_status === 'unsupported'
+        ? t('该命令不支持精确安全取消，查询仍在运行')
+        : (data.cancel_error || t('停止失败，查询仍在运行')));
+      return false;
+    }
+    return true;
+  }
+
+  function poll(payload, recover = false) {
+    recoveringRef.current = recover || recoveringRef.current;
+    recover = recoveringRef.current;
+    clearTimeout(pollRef.current);
+    pollRef.current = setTimeout(() => {
+      if (!mountedRef.current || executionRef.current !== payload || !runningRef.current) return;
+      http.get('/api/database/cancel/', {params: {id: payload.id, execution_id: payload.execution_id}})
+        .then(data => {
+          if (!mountedRef.current || executionRef.current !== payload || !runningRef.current) return;
+          if (recover && ['completed', 'cancelled', 'failed'].includes(data.status)) {
+            setResult({columns: [], rows: [], affected: 0, elapsed: 0, status: data.status,
+              message: data.status === 'cancelled' ? t('查询已中断') : t('执行已结束，原响应丢失，请检查结果')});
+            release();
+            return;
+          }
+          if (cancelFeedback(data) || recover) poll(payload, recover);
+        })
+        .catch(() => {
+          if (!mountedRef.current || executionRef.current !== payload || !runningRef.current) return;
+          setFailure(t('无法确认执行状态，连接保持锁定，请重试停止'));
+          setStopping(false);
+          if (recover) poll(payload, true);
+        });
+    }, 600);
+  }
+
+  function stop() {
+    if (!runningRef.current || stopping) return;
+    const payload = executionRef.current;
+    setStopping(true);
+    setFailure(undefined);
+    http.post('/api/database/cancel/', {id: payload.id, execution_id: payload.execution_id})
+      .then(data => {
+        if (!mountedRef.current || executionRef.current !== payload || !runningRef.current) return;
+        if (cancelFeedback(data)) poll(payload);
+      })
+      .catch(() => {
+        if (!mountedRef.current || executionRef.current !== payload || !runningRef.current) return;
+        setStopping(false);
+        setFailure(t('停止失败，查询仍在运行，可重试停止'));
+      });
+  }
+
   function execute(payload) {
     if (runningRef.current) return Promise.resolve();
     runningRef.current = true;
+    executionRef.current = payload;
+    setFailure(undefined);
     setRunning(true);
     if (onRunningChange) onRunningChange(true);
     const timeout = Math.max(
@@ -67,24 +146,30 @@ export default function QueryPanel({
     return http.post('/api/database/execute/', payload, {timeout})
       .then(data => {
         if (!mountedRef.current) return;
-        if (data.requires_confirmation) {
-          setConfirmation({
-            payload,
-            token: data.confirmation_token,
-            statementTypes: data.statement_types || [],
-            executionDatabase: data.execution_database,
-          });
+        if (data.status === 'unknown') {
+          setFailure(data.message);
+          poll(payload, true);
           return;
         }
-        setConfirmation(undefined);
-        setResult(data);
+        if (data.requires_confirmation) {
+          setConfirmation({payload, token: data.confirmation_token,
+            statementTypes: data.statement_types || [], executionDatabase: data.execution_database});
+        } else {
+          setConfirmation(undefined);
+          setResult(data);
+        }
+        release();
       })
-      .finally(() => {
-        runningRef.current = false;
-        if (mountedRef.current) setRunning(false);
-        if (onRunningChange) onRunningChange(false);
+      .catch(() => {
+        if (!mountedRef.current) return;
+        setFailure(t('执行响应异常，正在确认服务端状态；确认结束前保持锁定'));
+        poll(payload, true);
       });
   }
+
+  useEffect(() => {
+    if (onBusyChange) onBusyChange(running || Boolean(confirmation));
+  }, [running, confirmation, onBusyChange]);
 
   function run() {
     if (runningRef.current || confirmation) return;
@@ -96,9 +181,11 @@ export default function QueryPanel({
     }
     const payload = {
       id: connection.id,
+      execution_id: `${Date.now()}.${Array.from(window.crypto.getRandomValues(new Uint8Array(16)))
+        .map(x => x.toString(16).padStart(2, '0')).join('')}`,
       command: statement,
     };
-    if ((connection.type === 'mysql' || connection.type === 'mariadb') && activeDatabase) {
+    if (connection.type !== 'redis' && activeDatabase) {
       payload.database = activeDatabase;
     }
     execute(payload);
@@ -164,19 +251,34 @@ export default function QueryPanel({
           {connection.environment === 'production' && <Tag color="red">{t('生产')}</Tag>}
           {connection.read_only && <Tag>{t('只读')}</Tag>}
         </div>
-        <Space size={8}>
+        <Space size={8} wrap>
+          <span>{t(connection.type === 'postgresql' ? '执行模式' : '执行数据库')}</span>
+          <Select aria-label={connection.type === 'postgresql' ? '执行模式' : '执行数据库'}
+                  style={{minWidth: 150}} value={activeDatabase}
+                  disabled={running || Boolean(confirmation) || connection.type === 'redis'}
+                  onChange={onDatabaseChange}
+                  options={Array.from(new Set([activeDatabase, ...databases].filter(Boolean)))
+                    .map(name => ({label: name, value: name}))}/>
+          <Button danger icon={<DisconnectOutlined/>} onClick={() => {
+            if (running || confirmation) message.warning(t('请先停止查询或取消确认，等待执行结束后断开'));
+            else if (onDisconnect) onDisconnect();
+          }}>{t('断开连接')}</Button>
+          {running && <Button danger icon={<StopOutlined/>} loading={stopping} onClick={stop}>
+            {t(stopping ? '正在中断' : '停止')}
+          </Button>}
           <Tooltip title={t('清空编辑器和结果')}>
-            <Button icon={<ClearOutlined/>} onClick={clear}/>
+            <Button icon={<ClearOutlined/>} disabled={running || Boolean(confirmation)} onClick={clear}/>
           </Tooltip>
           <Tooltip title={t('有选中内容时仅运行选中内容')}>
             <Button type="primary" icon={<CaretRightOutlined/>} loading={running}
-                    disabled={!hasPermission('database.query.do')} onClick={run}>
+                    disabled={!hasPermission('database.query.do') || Boolean(confirmation)} onClick={run}>
               {t('运行')}
             </Button>
           </Tooltip>
         </Space>
       </div>
 
+      {failure && <Alert type="error" showIcon message={failure}/> }
       <div className={styles.editorShell}>
         <div className={styles.editorCaption}>
           <span>{connection.type === 'redis' ? t('命令编辑器') : 'SQL Editor'}</span>
@@ -249,7 +351,7 @@ export default function QueryPanel({
           </React.Fragment>
         ) : (
           <div className={styles.executionMessage}>
-            <Alert type="success" showIcon message={result.message || t('执行成功')}
+            <Alert type={result.status === 'failed' ? 'error' : result.status === 'cancelled' ? 'info' : 'success'} showIcon message={result.message || t('执行成功')}
                    description={`${t('影响行数')}: ${result.affected} · ${t('耗时')}: ${result.elapsed} ms`}/>
           </div>
         )}

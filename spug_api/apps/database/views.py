@@ -1,3 +1,6 @@
+import time
+from uuid import uuid4
+
 from django.db import transaction
 from django.views.generic import View
 
@@ -5,6 +8,8 @@ from libs import Argument, JsonParser, auth, json_response
 from apps.database.client import DatabaseClientError, execute, metadata, test_connection
 from apps.database.models import DatabaseConnection
 from apps.database.policy import PolicyViolation, enforce_command_policy
+from apps.database.executions import Registry, ExecutionError
+from apps.database.cancellation import cancelled_result
 
 
 _DEFAULT_DATABASES = {
@@ -16,6 +21,8 @@ _DEFAULT_DATABASES = {
 
 def _execution_database(connection, request_database=None):
     if request_database is not None:
+        if connection.type == 'postgresql':
+            return f'{connection.database or "postgres"} / {request_database}'
         return request_database
     return connection.database or _DEFAULT_DATABASES.get(connection.type, '')
 
@@ -160,6 +167,7 @@ def run_command(request):
         Argument('command', help='请输入要执行的命令'),
         Argument('database', required=False),
         Argument('confirmation_token', required=False),
+        Argument('execution_id', required=False),
     ).parse(request.body)
     if error:
         return json_response(error=error)
@@ -167,18 +175,25 @@ def run_command(request):
     if not item:
         return json_response(error='数据库连接不存在')
     request_database = None
-    if item.type in ('mysql', 'mariadb') and form.database is not None:
+    if item.type in ('mysql', 'mariadb', 'postgresql', 'clickhouse') and form.database is not None:
+        # Empty values from older PG/CH clients mean the configured default.
+        if item.type in ('postgresql', 'clickhouse') and form.database == '':
+            form.database = None
+    if item.type in ('mysql', 'mariadb', 'postgresql', 'clickhouse') and form.database is not None:
         if not isinstance(form.database, str) or not 0 < len(form.database.strip()) <= 128:
             return json_response(error='数据库名称必须为 1～128 个非空白字符')
-        request_database = form.database.strip()
+        request_database = form.database
     execution_database = _execution_database(item, request_database)
     try:
+        execution_id = form.execution_id or f'{int(time.time() * 1000)}.{uuid4()}'
+        registry = Registry(request.user.id, item.id, execution_id)
         decision = enforce_command_policy(
             item,
             request.user.id,
             form.command,
             confirmation_token=form.confirmation_token,
-            database=execution_database,
+            database=({'database': item.database or 'postgres', 'schema': request_database}
+                      if item.type == 'postgresql' else execution_database),
         )
         if decision.requires_confirmation:
             return json_response({
@@ -187,10 +202,44 @@ def run_command(request):
                 'statement_types': list(decision.statement_types),
                 'execution_database': execution_database,
             })
-        return json_response(execute(
-            item, form.command, database=request_database,
-        ))
-    except PolicyViolation as exc:
+        if not registry.begin():
+            return json_response(cancelled_result())
+        try:
+            result = execute(item, form.command, database=request_database, registry=registry)
+            registry.finish('cancelled' if result.get('status') == 'cancelled' else 'completed')
+            return json_response(result)
+        except Exception as exc:
+            if getattr(exc, 'execution_uncertain', False):
+                registry.update(cancel_status='failed', cancel_error='工作连接丢失，无法确认服务端执行结果')
+                return json_response({'status': 'unknown', 'message': '工作连接丢失，无法确认服务端执行结果，连接保持锁定'})
+            registry.finish('failed')
+            raise
+    except (PolicyViolation, ExecutionError) as exc:
+        if form.execution_id:
+            return json_response({'status': 'failed', 'message': str(exc)})
         return json_response(error=str(exc))
     except DatabaseClientError as exc:
+        if form.execution_id:
+            return json_response({'status': 'failed', 'message': f'执行失败: {exc}'})
         return json_response(error=f'执行失败: {exc}')
+
+
+@auth('database.query.do')
+def cancel_command(request):
+    if not request.user.has_perms(['database.connection.view']):
+        return json_response(error='权限拒绝')
+    form, error = JsonParser(
+        Argument('id', type=int, help='请指定数据库连接'),
+        Argument('execution_id', help='请指定执行标识'),
+    ).parse(request.GET if request.method == 'GET' else request.body)
+    if error:
+        return json_response(error=error)
+    if not DatabaseConnection.objects.filter(pk=form.id).exists():
+        return json_response(error='数据库连接不存在')
+    try:
+        registry = Registry(request.user.id, form.id, form.execution_id)
+        result = registry.status() if request.method == 'GET' else registry.cancel()
+        # Targets are internal; callers get only lifecycle and cancellation feedback.
+        return json_response({k: v for k, v in result.items() if k not in ('target', 'engine')})
+    except ExecutionError as exc:
+        return json_response(error=str(exc))

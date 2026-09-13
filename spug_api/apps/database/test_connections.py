@@ -1,6 +1,6 @@
 import json
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 from django.test import RequestFactory, SimpleTestCase
 
@@ -382,7 +382,7 @@ class RunCommandPolicyTests(SimpleTestCase):
         payload = json.loads(response.content)
         self.assertFalse(payload['error'])
         self.assertEqual(payload['data'], {'rows': [], 'affected': 1})
-        execute_command.assert_called_once_with(self.connection, command, database=None)
+        execute_command.assert_called_once_with(self.connection, command, database=None, registry=ANY)
 
     @patch('apps.database.views.execute', return_value={'rows': [], 'affected': 1})
     @patch('apps.database.views.DatabaseConnection.objects.filter')
@@ -400,7 +400,7 @@ class RunCommandPolicyTests(SimpleTestCase):
             json.loads(replay.content)['error'],
             '确认令牌无效或已过期',
         )
-        execute_command.assert_called_once_with(self.connection, command, database=None)
+        execute_command.assert_called_once_with(self.connection, command, database=None, registry=ANY)
 
     @patch('apps.database.views.execute', return_value={'rows': [], 'affected': 0})
     @patch('apps.database.views.DatabaseConnection.objects.filter')
@@ -412,7 +412,7 @@ class RunCommandPolicyTests(SimpleTestCase):
         response = run_command(self.request(command))
 
         self.assertFalse(json.loads(response.content)['error'])
-        execute_command.assert_called_once_with(self.connection, command, database=None)
+        execute_command.assert_called_once_with(self.connection, command, database=None, registry=ANY)
 
     @patch('apps.database.views.execute', return_value={'rows': [], 'affected': 0})
     @patch('apps.database.views.DatabaseConnection.objects.filter')
@@ -427,7 +427,7 @@ class RunCommandPolicyTests(SimpleTestCase):
         payload = json.loads(response.content)
         self.assertFalse(payload['error'])
         execute_command.assert_called_once_with(
-            self.connection, 'SELECT * FROM users', database='analytics')
+            self.connection, 'SELECT * FROM users', database='analytics', registry=ANY)
         self.assertEqual(self.connection.database, 'operations')
 
     @patch('apps.database.views.execute', return_value={'rows': [], 'affected': 0})
@@ -447,7 +447,7 @@ class RunCommandPolicyTests(SimpleTestCase):
                 payload = json.loads(response.content)
                 self.assertFalse(payload['error'])
                 execute_command.assert_called_once_with(
-                    self.connection, 'SELECT * FROM users', database=None)
+                    self.connection, 'SELECT * FROM users', database=None, registry=ANY)
                 execute_command.reset_mock()
 
     @patch('apps.database.views.execute', return_value={})
@@ -504,7 +504,7 @@ class RunCommandPolicyTests(SimpleTestCase):
         self.assertFalse(payload['error'])
         self.assertEqual(payload['data'], {'rows': [], 'affected': 1})
         execute_command.assert_called_once_with(
-            self.connection, command, database='analytics')
+            self.connection, command, database='analytics', registry=ANY)
 
     @patch('apps.database.views.execute')
     @patch('apps.database.views.DatabaseConnection.objects.filter')

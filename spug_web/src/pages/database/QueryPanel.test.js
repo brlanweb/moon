@@ -71,6 +71,7 @@ function button(text) {
 }
 
 beforeEach(() => {
+  Object.defineProperty(window, 'crypto', {configurable: true, value: require('crypto').webcrypto});
   jest.clearAllMocks();
   window.matchMedia = window.matchMedia || (() => ({matches: false, addListener() {}, removeListener() {}}));
   root = document.createElement('div');
@@ -100,6 +101,7 @@ test('shows a dangerous production confirmation without treating the challenge a
   expect(http.post).toHaveBeenCalledTimes(1);
   expect(http.post).toHaveBeenCalledWith('/api/database/execute/', {
     id: 7,
+    execution_id: expect.any(String),
     command: "UPDATE orders SET status = 'paid' WHERE id = 42;",
     database: 'tenant_42',
   }, {timeout: 155000});
@@ -151,6 +153,7 @@ test('confirms by retrying the identical execution with the challenge token and 
   expect(http.post).toHaveBeenCalledTimes(2);
   expect(http.post).toHaveBeenNthCalledWith(2, '/api/database/execute/', {
     id: 7,
+    execution_id: expect.any(String),
     command: "UPDATE orders SET status = 'paid' WHERE id = 42;",
     database: 'tenant_42',
     confirmation_token: 'signed-token',
@@ -217,4 +220,93 @@ test('keeps rendering ordinary query responses', async () => {
   expect(document.body.textContent).toContain('42');
   expect(document.body.textContent).toContain('1 行');
   expect(document.querySelector('.ant-modal')).toBeNull();
+});
+
+test('stop only requests cancellation and keeps the execution locked until acknowledgement', async () => {
+  const request = deferred();
+  http.post.mockReturnValueOnce(request.promise).mockResolvedValue({status: 'cancelling'});
+  renderPanel({command: 'SELECT SLEEP(10)'});
+  act(() => button('运行').click());
+  const payload = http.post.mock.calls[0][1];
+  expect(payload.execution_id).toMatch(/^\d+\.[0-9a-f-]+$/);
+  expect(button('停止')).toBeDefined();
+  act(() => button('停止').click());
+  await flush();
+  expect(http.post).toHaveBeenLastCalledWith('/api/database/cancel/', {
+    id: 7, execution_id: payload.execution_id,
+  });
+  expect(button('正在中断')).toBeDefined();
+  act(() => button('运行').click());
+  expect(http.post).toHaveBeenCalledTimes(2);
+  request.resolve({status: 'cancelled', columns: [], rows: [], affected: 0, elapsed: 1, message: '查询已中断'});
+  await flush();
+  expect(button('正在中断')).toBeUndefined();
+  expect(document.body.textContent).toContain('查询已中断');
+});
+
+test('unsupported stop preserves running state and explains the failure', async () => {
+  const request = deferred();
+  http.post.mockReturnValueOnce(request.promise).mockResolvedValue({status: 'cancelling', cancel_status: 'unsupported'});
+  renderPanel({command: 'SELECT 1'});
+  act(() => button('运行').click());
+  act(() => button('停止').click());
+  await flush();
+  expect(button('运行').classList.contains('ant-btn-loading')).toBe(true);
+  expect(document.body.textContent).toContain('不支持精确安全取消');
+  request.resolve({columns: [], rows: [], affected: 0, elapsed: 1});
+  await flush();
+});
+
+test('locks the database during production confirmation and executes the original schema snapshot', async () => {
+  http.post.mockResolvedValueOnce({requires_confirmation: true, confirmation_token: 'token',
+    execution_database: 'app / tenant', statement_types: ['UPDATE']})
+    .mockResolvedValueOnce({columns: [], rows: [], affected: 1});
+  renderPanel({connection: {...PRODUCTION_CONNECTION, type: 'postgresql', database: 'app'},
+    activeDatabase: 'tenant', databases: ['tenant', 'other']});
+  act(() => button('运行').click());
+  await flush();
+  expect(root.querySelector('.ant-select').classList.contains('ant-select-disabled')).toBe(true);
+  const first = http.post.mock.calls[0][1];
+  act(() => button('确认执行').click());
+  await flush();
+  expect(http.post.mock.calls[1][1]).toEqual({...first, confirmation_token: 'token'});
+  expect(first.database).toBe('tenant');
+});
+
+test('a late stop response cannot replace a completed execution with cancelling', async () => {
+  const query = deferred();
+  const cancellation = deferred();
+  http.post.mockReturnValueOnce(query.promise).mockReturnValueOnce(cancellation.promise);
+  renderPanel({command: 'SELECT 42'});
+  act(() => button('运行').click());
+  act(() => button('停止').click());
+  query.resolve({columns: ['answer'], rows: [[42]], elapsed: 1});
+  await flush();
+  cancellation.resolve({status: 'cancelling'});
+  await flush();
+  expect(button('正在中断')).toBeUndefined();
+  expect(button('运行').classList.contains('ant-btn-loading')).toBe(false);
+  expect(root.textContent).toContain('42');
+});
+
+test('a failed stop request keeps the original execution running', async () => {
+  const query = deferred();
+  http.post.mockReturnValueOnce(query.promise).mockRejectedValueOnce('denied');
+  renderPanel();
+  act(() => button('运行').click());
+  act(() => button('停止').click());
+  await flush();
+  expect(root.textContent).toContain('停止失败，查询仍在运行');
+  expect(button('运行').classList.contains('ant-btn-loading')).toBe(true);
+  query.resolve({columns: [], rows: [], elapsed: 1});
+  await flush();
+});
+
+test('a definite policy rejection ends loading and shows the server failure', async () => {
+  http.post.mockResolvedValue({status: 'failed', message: '只读连接不允许执行该命令'});
+  renderPanel();
+  act(() => button('运行').click());
+  await flush();
+  expect(button('运行').classList.contains('ant-btn-loading')).toBe(false);
+  expect(root.textContent).toContain('只读连接不允许执行该命令');
 });
