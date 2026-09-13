@@ -43,6 +43,8 @@ let root;
 let history;
 let streams;
 let confirm;
+const fullscreenElementDescriptor = Object.getOwnPropertyDescriptor(document, 'fullscreenElement');
+const exitFullscreenDescriptor = Object.getOwnPropertyDescriptor(document, 'exitFullscreen');
 const flush = async () => {
   for (let index = 0; index < 6; index += 1) await Promise.resolve();
 };
@@ -93,6 +95,7 @@ beforeEach(() => {
   });
   confirm = jest.spyOn(Modal, 'confirm').mockReturnValue({destroy: jest.fn()});
   jest.spyOn(message, 'success').mockImplementation(() => {});
+  jest.spyOn(message, 'warning').mockImplementation(() => {});
   root = document.createElement('div');
   document.body.appendChild(root);
 });
@@ -100,6 +103,10 @@ afterEach(() => {
   act(() => { ReactDOM.unmountComponentAtNode(root); message.destroy(); });
   root.remove();
   jest.restoreAllMocks();
+  if (fullscreenElementDescriptor) Object.defineProperty(document, 'fullscreenElement', fullscreenElementDescriptor);
+  else delete document.fullscreenElement;
+  if (exitFullscreenDescriptor) Object.defineProperty(document, 'exitFullscreen', exitFullscreenDescriptor);
+  else delete document.exitFullscreen;
   delete global.EventSource;
 });
 
@@ -332,6 +339,74 @@ test('log search prints only case-insensitive keyword matches', async () => {
   expect(search).not.toBeNull();
   await act(async () => { Simulate.change(search, {target: {value: 'error'}}); });
   expect(root.querySelector('.ant-tabs-tabpane-active pre').textContent).toBe('ERROR failed\nerror retry');
+});
+
+test('follow stream keeps filtering newly appended log lines by the active keyword', async () => {
+  await render({section: 'projects'});
+  await host();
+  const row = Array.from(root.querySelectorAll('tbody tr'))
+    .find(item => item.textContent.includes('web-app-1'));
+  await act(async () => { Simulate.click(row.querySelectorAll('button')[0]); await flush(); });
+  const search = root.querySelector('input[placeholder="搜索日志"]');
+  await act(async () => { Simulate.change(search, {target: {value: 'error'}}); });
+  await click('实时跟随');
+  const stream = streams.find(item => item.url.includes('/api/docker/logs/'));
+
+  await act(async () => {
+    stream.onmessage({data: JSON.stringify({type: 'log', lines: ['INFO heartbeat', 'ERROR timeout']})});
+    await flush();
+  });
+
+  expect(root.querySelector('.ant-tabs-tabpane-active pre').textContent).toBe('ERROR timeout');
+  expect(root.textContent).toContain('1 / 2 行');
+});
+
+test('log panel can enter and exit browser fullscreen', async () => {
+  await render({section: 'projects'});
+  await host();
+  const row = Array.from(root.querySelectorAll('tbody tr'))
+    .find(item => item.textContent.includes('web-app-1'));
+  await act(async () => { Simulate.click(row.querySelectorAll('button')[0]); await flush(); });
+  const panel = root.querySelector('.ant-tabs-tabpane-active pre').parentElement;
+  panel.requestFullscreen = jest.fn(() => {
+    Object.defineProperty(document, 'fullscreenElement', {configurable: true, value: panel});
+    document.dispatchEvent(new Event('fullscreenchange'));
+    return Promise.resolve();
+  });
+  document.exitFullscreen = jest.fn(() => {
+    Object.defineProperty(document, 'fullscreenElement', {configurable: true, value: null});
+    document.dispatchEvent(new Event('fullscreenchange'));
+    return Promise.resolve();
+  });
+
+  await act(async () => { Simulate.click(root.querySelector('button[aria-label="全屏查看日志"]')); await flush(); });
+  expect(panel.requestFullscreen).toHaveBeenCalledTimes(1);
+  expect(root.querySelector('button[aria-label="退出全屏"]')).not.toBeNull();
+
+  await act(async () => {
+    Object.defineProperty(document, 'fullscreenElement', {configurable: true, value: null});
+    document.dispatchEvent(new Event('fullscreenchange'));
+    await flush();
+  });
+  expect(root.querySelector('button[aria-label="全屏查看日志"]')).not.toBeNull();
+
+  await act(async () => { Simulate.click(root.querySelector('button[aria-label="全屏查看日志"]')); await flush(); });
+  await act(async () => { Simulate.click(root.querySelector('button[aria-label="退出全屏"]')); await flush(); });
+  expect(document.exitFullscreen).toHaveBeenCalledTimes(1);
+});
+
+test('log fullscreen reports a rejected browser request', async () => {
+  await render({section: 'projects'});
+  await host();
+  const row = Array.from(root.querySelectorAll('tbody tr'))
+    .find(item => item.textContent.includes('web-app-1'));
+  await act(async () => { Simulate.click(row.querySelectorAll('button')[0]); await flush(); });
+  const panel = root.querySelector('.ant-tabs-tabpane-active pre').parentElement;
+  panel.requestFullscreen = jest.fn(() => Promise.reject(new Error('denied')));
+
+  await act(async () => { Simulate.click(root.querySelector('button[aria-label="全屏查看日志"]')); await flush(); });
+
+  expect(message.warning).toHaveBeenCalledWith('无法切换日志全屏');
 });
 
 test('project page retains compose actions, editor and standalone container operations', async () => {

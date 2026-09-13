@@ -4,8 +4,9 @@ import {
 } from 'antd';
 import {
   AppstoreOutlined, CaretRightOutlined, ClearOutlined, CloudServerOutlined, DatabaseOutlined,
-  DeleteOutlined, DockerOutlined, FileTextOutlined, HddOutlined, PauseOutlined, PlayCircleOutlined,
-  PlusOutlined, RedoOutlined, ReloadOutlined, SaveOutlined, SearchOutlined, StopOutlined,
+  DeleteOutlined, DockerOutlined, FileTextOutlined, FullscreenExitOutlined, FullscreenOutlined,
+  HddOutlined, PauseOutlined, PlayCircleOutlined, PlusOutlined, RedoOutlined, ReloadOutlined,
+  SaveOutlined, SearchOutlined, StopOutlined,
 } from '@ant-design/icons';
 import { ACEditor } from 'components';
 import { hasPermission, http, t, X_TOKEN } from 'libs';
@@ -261,6 +262,7 @@ function ProjectConsole({hosts, hostId, initialView = 'project', onDirtyChange})
   const activeKeyRef = useRef();
   const statsRef = useRef(null);
   const editorBoxRef = useRef();
+  const logPanelRef = useRef();
   const logBoxRef = useRef();
   const logStreamRef = useRef(null);
   // 用户是否贴着日志底部，决定新日志到达时要不要自动滚动
@@ -268,6 +270,7 @@ function ProjectConsole({hosts, hostId, initialView = 'project', onDirtyChange})
   // ACEditor 只接受具体像素高度，用 ResizeObserver 跟随容器铺满剩余空间
   const [editorHeight, setEditorHeight] = useState(360);
   const [logWrap, setLogWrap] = useState(true);
+  const [logFullscreen, setLogFullscreen] = useState(false);
   const active = projects.find(item => projectKey(item) === activeKey);
   const isContainerWorkspace = initialView === 'standalone';
   const managedContainers = projects.reduce((result, project) => result.concat(
@@ -441,6 +444,12 @@ function ProjectConsole({hosts, hostId, initialView = 'project', onDirtyChange})
     observer.observe(box);
     return () => observer.disconnect();
   }, [activeTab, view, activeKey]);
+
+  useEffect(() => {
+    const syncFullscreen = () => setLogFullscreen(document.fullscreenElement === logPanelRef.current);
+    document.addEventListener('fullscreenchange', syncFullscreen);
+    return () => document.removeEventListener('fullscreenchange', syncFullscreen);
+  }, []);
 
   useEffect(() => {
     // 仅在用户本来就贴着底部时才自动滚动，否则会把正在往回翻的人拽回来
@@ -909,6 +918,24 @@ function ProjectConsole({hosts, hostId, initialView = 'project', onDirtyChange})
     }
   }
 
+  function toggleLogFullscreen() {
+    let operation;
+    try {
+      if (logFullscreen && document.exitFullscreen) {
+        operation = document.exitFullscreen();
+      } else if (!logFullscreen && logPanelRef.current?.requestFullscreen) {
+        operation = logPanelRef.current.requestFullscreen();
+      } else {
+        message.warning(t('当前浏览器不支持全屏查看'));
+        return;
+      }
+    } catch (error) {
+      message.warning(t('无法切换日志全屏'));
+      return;
+    }
+    if (operation?.catch) operation.catch(() => message.warning(t('无法切换日志全屏')));
+  }
+
   // 独立容器必须先选中一个才能跟随，项目视图不选则跟随全部服务
   const canFollow = isStandalone ? Boolean(logService) : Boolean(active);
   const logPlaceholder = follow
@@ -923,7 +950,7 @@ function ProjectConsole({hosts, hostId, initialView = 'project', onDirtyChange})
     : (normalizedKeyword && logLines.length ? t('没有匹配的日志') : logPlaceholder);
 
   const logPane = (
-    <div className={styles.logs}>
+    <div ref={logPanelRef} className={styles.logs}>
       <div className={styles.logToolbar}>
         <Select allowClear value={logService} style={{width: 200}}
                 placeholder={isStandalone ? t('选择容器') : t('全部服务')}
@@ -950,6 +977,11 @@ function ProjectConsole({hosts, hostId, initialView = 'project', onDirtyChange})
             {following ? t('实时') : t('连接中')}
           </Tag>
         )}
+        <Tooltip title={t(logFullscreen ? '退出全屏' : '全屏查看日志')}>
+          <Button icon={logFullscreen ? <FullscreenExitOutlined/> : <FullscreenOutlined/>}
+                  aria-label={t(logFullscreen ? '退出全屏' : '全屏查看日志')}
+                  onClick={toggleLogFullscreen}/>
+        </Tooltip>
         <Checkbox checked={logWrap} onChange={e => setLogWrap(e.target.checked)}
                   className={styles.logWrap}>{t('自动换行')}</Checkbox>
         <span className={styles.logCount}>
