@@ -38,6 +38,8 @@ class DatabaseConnection(models.Model, ModelMixin):
     password = models.TextField(blank=True, default='')
     database = models.CharField(max_length=128, blank=True, default='')
     use_ssl = models.BooleanField(default=False)
+    connect_timeout = models.PositiveIntegerField(default=10)
+    query_timeout = models.PositiveIntegerField(default=30)
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='+')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

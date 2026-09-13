@@ -17,6 +17,10 @@ def _connection_form(body, partial=False):
         Argument('password', required=False, default=''),
         Argument('database', required=False, default=''),
         Argument('use_ssl', type=bool, default=False),
+        Argument('connect_timeout', type=int, default=10,
+                 filter=lambda x: 1 <= x <= 120, help='连接超时必须在 1～120 秒之间'),
+        Argument('query_timeout', type=int, default=30,
+                 filter=lambda x: 1 <= x <= 3600, help='查询超时必须在 1～3600 秒之间'),
     ).parse(body, partial)
 
 
@@ -25,6 +29,7 @@ def _temporary_connection(form):
         name=form.get('name') or 'temp', type=form.type, host=form.host,
         port=form.port, username=form.get('username') or '',
         database=form.get('database') or '', use_ssl=form.get('use_ssl') or False,
+        connect_timeout=form.connect_timeout, query_timeout=form.query_timeout,
     )
     item.set_password(form.get('password') or '')
     return item
@@ -88,7 +93,8 @@ def check_connection(request):
         item = DatabaseConnection.objects.filter(pk=form.id).first()
         if not item:
             return json_response(error='数据库连接不存在')
-        for key in ('name', 'type', 'host', 'port', 'username', 'database', 'use_ssl'):
+        for key in ('name', 'type', 'host', 'port', 'username', 'database', 'use_ssl',
+                    'connect_timeout', 'query_timeout'):
             setattr(item, key, form.get(key))
     else:
         item = _temporary_connection(form)

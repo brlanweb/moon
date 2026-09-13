@@ -1,0 +1,146 @@
+import json
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from django.test import RequestFactory, SimpleTestCase
+
+from apps.database.client import _clickhouse, _mysql, _postgresql, _redis
+from apps.database.models import DatabaseConnection
+from apps.database.views import _connection_form, _temporary_connection, check_connection
+
+
+class ConnectionSettingsTests(SimpleTestCase):
+    def setUp(self):
+        self.payload = {
+            'name': 'reporting',
+            'type': 'mysql',
+            'host': 'db.internal',
+            'port': 3306,
+        }
+
+    def test_model_uses_existing_client_timeouts_as_defaults(self):
+        connection = DatabaseConnection()
+
+        self.assertEqual(connection.connect_timeout, 10)
+        self.assertEqual(connection.query_timeout, 30)
+
+    def test_form_uses_timeout_defaults_when_omitted(self):
+        form, error = _connection_form(self.payload)
+
+        self.assertIsNone(error)
+        self.assertEqual(form.connect_timeout, 10)
+        self.assertEqual(form.query_timeout, 30)
+
+    def test_form_accepts_timeout_boundaries(self):
+        payload = {**self.payload, 'connect_timeout': 120, 'query_timeout': 3600}
+
+        form, error = _connection_form(payload)
+
+        self.assertIsNone(error)
+        self.assertEqual(form.connect_timeout, 120)
+        self.assertEqual(form.query_timeout, 3600)
+
+    def test_form_rejects_connect_timeout_outside_allowed_range(self):
+        for value in (0, 121):
+            with self.subTest(value=value):
+                _, error = _connection_form({**self.payload, 'connect_timeout': value})
+
+                self.assertEqual(error, '连接超时必须在 1～120 秒之间')
+
+    def test_form_rejects_query_timeout_outside_allowed_range(self):
+        for value in (0, 3601):
+            with self.subTest(value=value):
+                _, error = _connection_form({**self.payload, 'query_timeout': value})
+
+                self.assertEqual(error, '查询超时必须在 1～3600 秒之间')
+
+    def test_temporary_connection_keeps_requested_timeouts(self):
+        form, error = _connection_form({
+            **self.payload,
+            'connect_timeout': 17,
+            'query_timeout': 83,
+        })
+
+        self.assertIsNone(error)
+        connection = _temporary_connection(form)
+        self.assertEqual(connection.connect_timeout, 17)
+        self.assertEqual(connection.query_timeout, 83)
+
+    @patch('apps.database.views.test_connection', return_value=12)
+    @patch('apps.database.views.DatabaseConnection.objects.filter')
+    def test_existing_connection_check_uses_requested_timeouts(self, connections, _test):
+        item = SimpleNamespace(
+            name='reporting', type='mysql', host='old.internal', port=3306,
+            username='spug', database='operations', use_ssl=False,
+            connect_timeout=10, query_timeout=30,
+        )
+        connections.return_value.first.return_value = item
+        payload = {
+            **self.payload,
+            'id': 7,
+            'connect_timeout': 19,
+            'query_timeout': 91,
+        }
+        request = RequestFactory().post(
+            '/api/database/connection/check/',
+            data=json.dumps(payload),
+            content_type='application/json',
+        )
+        request.user = SimpleNamespace(has_perms=lambda _perms: True)
+
+        response = check_connection(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(item.connect_timeout, 19)
+        self.assertEqual(item.query_timeout, 91)
+
+
+class DriverTimeoutTests(SimpleTestCase):
+    def connection(self, database_type):
+        return SimpleNamespace(
+            type=database_type,
+            host='db.internal',
+            port=5432,
+            username='spug',
+            database='operations',
+            use_ssl=False,
+            connect_timeout=17,
+            query_timeout=83,
+            get_password=lambda: 'secret',
+        )
+
+    @patch('pymysql.connect')
+    def test_mysql_receives_connection_timeouts(self, connect):
+        _mysql(self.connection('mysql'))
+
+        kwargs = connect.call_args.kwargs
+        self.assertEqual(kwargs['connect_timeout'], 17)
+        self.assertEqual(kwargs['read_timeout'], 83)
+        self.assertEqual(kwargs['write_timeout'], 83)
+
+    @patch('psycopg.connect')
+    def test_postgresql_receives_connection_timeouts(self, connect):
+        _postgresql(self.connection('postgresql'))
+
+        kwargs = connect.call_args.kwargs
+        self.assertEqual(kwargs['connect_timeout'], 17)
+        self.assertEqual(kwargs['options'], '-c statement_timeout=83000')
+
+    @patch('clickhouse_connect.get_client')
+    def test_clickhouse_receives_connection_timeouts(self, get_client):
+        _clickhouse(self.connection('clickhouse'))
+
+        kwargs = get_client.call_args.kwargs
+        self.assertEqual(kwargs['connect_timeout'], 17)
+        self.assertEqual(kwargs['send_receive_timeout'], 83)
+
+    @patch('redis.Redis')
+    def test_redis_receives_connection_timeouts(self, redis_client):
+        connection = self.connection('redis')
+        connection.database = '2'
+
+        _redis(connection)
+
+        kwargs = redis_client.call_args.kwargs
+        self.assertEqual(kwargs['socket_connect_timeout'], 17)
+        self.assertEqual(kwargs['socket_timeout'], 83)

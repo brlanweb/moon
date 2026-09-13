@@ -7,8 +7,6 @@ from decimal import Decimal
 
 
 ROW_LIMIT = 1000
-CONNECT_TIMEOUT = 10
-QUERY_TIMEOUT = 30
 
 
 class DatabaseClientError(Exception):
@@ -48,8 +46,8 @@ def _mysql(connection):
         host=connection.host, port=connection.port,
         user=connection.username or None, password=connection.get_password(),
         database=connection.database or None, charset='utf8mb4', autocommit=True,
-        connect_timeout=CONNECT_TIMEOUT, read_timeout=QUERY_TIMEOUT,
-        write_timeout=QUERY_TIMEOUT, ssl=ssl,
+        connect_timeout=connection.connect_timeout, read_timeout=connection.query_timeout,
+        write_timeout=connection.query_timeout, ssl=ssl,
     )
 
 
@@ -59,9 +57,9 @@ def _postgresql(connection):
     return psycopg.connect(
         host=connection.host, port=connection.port,
         user=connection.username or None, password=connection.get_password() or None,
-        dbname=connection.database or 'postgres', connect_timeout=CONNECT_TIMEOUT,
+        dbname=connection.database or 'postgres', connect_timeout=connection.connect_timeout,
         sslmode='require' if connection.use_ssl else 'prefer',
-        options=f'-c statement_timeout={QUERY_TIMEOUT * 1000}', autocommit=True,
+        options=f'-c statement_timeout={connection.query_timeout * 1000}', autocommit=True,
     )
 
 
@@ -72,7 +70,8 @@ def _clickhouse(connection):
         host=connection.host, port=connection.port,
         username=connection.username or 'default', password=connection.get_password(),
         database=connection.database or 'default', secure=connection.use_ssl,
-        connect_timeout=CONNECT_TIMEOUT, send_receive_timeout=QUERY_TIMEOUT,
+        connect_timeout=connection.connect_timeout,
+        send_receive_timeout=connection.query_timeout,
     )
 
 
@@ -86,8 +85,8 @@ def _redis(connection):
     return redis.Redis(
         host=connection.host, port=connection.port, db=db,
         username=connection.username or None, password=connection.get_password() or None,
-        ssl=connection.use_ssl, socket_connect_timeout=CONNECT_TIMEOUT,
-        socket_timeout=QUERY_TIMEOUT, decode_responses=True,
+        ssl=connection.use_ssl, socket_connect_timeout=connection.connect_timeout,
+        socket_timeout=connection.query_timeout, decode_responses=True,
     )
 
 
