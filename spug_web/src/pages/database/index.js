@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Dropdown, Empty, Input, Modal, Space, Spin, Tabs, Tree, message } from 'antd';
 import {
   DatabaseOutlined,
   DeleteOutlined,
+  DisconnectOutlined,
   EditOutlined,
   MoreOutlined,
   PlusOutlined,
@@ -43,11 +44,62 @@ export default function DatabaseConsole() {
   const [commands, setCommands] = useState({});
   const [formVisible, setFormVisible] = useState(false);
   const [record, setRecord] = useState({});
+  const connectionsRef = useRef(connections);
+  const tabsRef = useRef(tabs);
+  const lastActivityRef = useRef({});
+
+  connectionsRef.current = connections;
+  tabsRef.current = tabs;
 
   useEffect(() => {
     document.title = 'Moon database console';
     fetchConnections();
   }, []);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const now = Date.now();
+      connectionsRef.current.forEach(item => {
+        const timeout = Number(item.idle_timeout);
+        const lastActivity = lastActivityRef.current[item.id];
+        if (timeout > 0 && lastActivity !== undefined && now - lastActivity >= timeout * 60 * 1000) {
+          disconnectConnection(item.id);
+          message.info(t('连接【{}】因空闲已断开', item.name));
+        }
+      });
+    }, 15000);
+    return () => clearInterval(timer);
+  }, []);
+
+  function markActivity(id) {
+    lastActivityRef.current[id] = Date.now();
+  }
+
+  function disconnectConnection(id) {
+    const currentTabs = tabsRef.current;
+    const index = currentTabs.indexOf(id);
+    const nextTabs = currentTabs.filter(item => item !== id);
+    tabsRef.current = nextTabs;
+    delete lastActivityRef.current[id];
+    setTabs(current => current.filter(item => item !== id));
+    setActiveId(active => active === id ? nextTabs[index] || nextTabs[index - 1] : active);
+    setMetadata(current => {
+      const next = {...current};
+      delete next[id];
+      return next;
+    });
+    setCommands(current => {
+      const next = {...current};
+      delete next[id];
+      return next;
+    });
+    setExpandedKeys(current => current.filter(key => {
+      const value = String(key);
+      return value !== `connection-${id}` &&
+        !value.startsWith(`group-${id}-`) &&
+        !value.startsWith(`item-${id}-`);
+    }));
+  }
 
   function fetchConnections() {
     setFetching(true);
@@ -77,6 +129,9 @@ export default function DatabaseConsole() {
 
   function connectionMenu(item) {
     const items = [];
+    if (metadata[item.id] || tabs.includes(item.id)) {
+      items.push({key: 'disconnect', icon: <DisconnectOutlined/>, label: t('断开连接')});
+    }
     if (hasPermission('database.connection.edit')) {
       items.push({key: 'edit', icon: <EditOutlined/>, label: t('编辑')});
     }
@@ -87,6 +142,7 @@ export default function DatabaseConsole() {
       items,
       onClick: ({key, domEvent}) => {
         domEvent.stopPropagation();
+        if (key === 'disconnect') disconnectConnection(item.id);
         if (key === 'edit') openForm(item);
         if (key === 'delete') removeConnection(item);
       },
@@ -97,6 +153,7 @@ export default function DatabaseConsole() {
     if (!item) return;
     const nodeKey = `connection-${item.id}`;
     const activate = () => {
+      markActivity(item.id);
       setTabs(current => current.includes(item.id) ? current : [...current, item.id]);
       setActiveId(item.id);
       setExpandedKeys(current => current.includes(nodeKey) ? current : [...current, nodeKey]);
@@ -196,6 +253,7 @@ export default function DatabaseConsole() {
         <QueryPanel
           connection={item}
           command={commands[id]}
+          onActivity={() => markActivity(id)}
           onCommandChange={value => setCommands(current => ({...current, [id]: value}))}/>
       ),
     };
@@ -234,7 +292,11 @@ export default function DatabaseConsole() {
       <main className={styles.content}>
         {tabItems.length ? (
           <Tabs className={styles.tabs} type="editable-card" hideAdd activeKey={String(activeId)}
-                onChange={key => setActiveId(Number(key))}
+                onChange={key => {
+                  const id = Number(key);
+                  markActivity(id);
+                  setActiveId(id);
+                }}
                 onEdit={(key, action) => action === 'remove' && closeTab(Number(key))}
                 tabBarExtraContent={activeId ? (
                   <Button type="text" icon={<ReloadOutlined/>}

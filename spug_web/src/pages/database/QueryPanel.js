@@ -25,11 +25,16 @@ function csvCell(value) {
   return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
-export default function QueryPanel({connection, command, onCommandChange}) {
+export default function QueryPanel({connection, command, onCommandChange, onActivity}) {
   const editorRef = useRef();
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState();
   const value = command === undefined ? INITIAL_COMMAND[connection.type] : command;
+
+  function changeCommand(nextValue) {
+    onCommandChange(nextValue);
+    if (onActivity) onActivity();
+  }
 
   function selectedCommand() {
     const selected = editorRef.current?.editor?.getSelectedText();
@@ -37,6 +42,7 @@ export default function QueryPanel({connection, command, onCommandChange}) {
   }
 
   function run() {
+    if (onActivity) onActivity();
     const statement = selectedCommand();
     if (!statement) {
       message.warning(t('请输入要执行的命令'));
@@ -49,7 +55,7 @@ export default function QueryPanel({connection, command, onCommandChange}) {
   }
 
   function clear() {
-    onCommandChange('');
+    changeCommand('');
     setResult(undefined);
     if (editorRef.current?.editor) editorRef.current.editor.focus();
   }
@@ -141,7 +147,7 @@ export default function QueryPanel({connection, command, onCommandChange}) {
             bindKey: {win: 'Ctrl-Enter', mac: 'Command-Enter'},
             exec: run,
           }]}
-          onChange={onCommandChange}/>
+          onChange={changeCommand}/>
       </div>
 
       <div className={styles.resultBar}>
