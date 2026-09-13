@@ -283,6 +283,28 @@
 }
 .sslRow strong { display: block; color: #374151; font-size: 12px; }
 .sslRow span { display: block; margin-top: 2px; color: #8a93a1; font-size: 11px; }
+.importSection { padding-top: 12px; }
+.importSection > button { height: 28px; padding: 0; font-size: 12px; }
+.uriImport { display: flex; gap: 8px; padding: 8px 0 2px; }
+.uriImport > button { flex: none; }
+.advancedSection { padding: 10px 0 4px; }
+.advancedToggle { height: 32px; padding: 0; color: #374151; font-size: 12px; font-weight: 600; }
+.advancedContent { padding-top: 12px; border-top: 1px solid #edf0f2; }
+.settingRow {
+  min-height: 48px;
+  margin-bottom: 16px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid #e2e6ea;
+  border-radius: 4px;
+  background: #fafbfc;
+}
+.settingRow strong { display: block; color: #374151; font-size: 12px; }
+.settingRow span { display: block; margin-top: 2px; color: #8a93a1; font-size: 11px; }
+.environmentSelector { width: 100%; display: flex; }
+.environmentSelector :global(.ant-radio-button-wrapper) { flex: 1; text-align: center; }
 
 @media (max-width: 900px) {
   .sider { width: 240px; }

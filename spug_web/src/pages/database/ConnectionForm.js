@@ -15,10 +15,14 @@ import {
   CheckCircleFilled,
   CloseCircleFilled,
   DatabaseOutlined,
+  DownOutlined,
+  ImportOutlined,
   LinkOutlined,
+  RightOutlined,
   SaveOutlined,
 } from '@ant-design/icons';
 import { http, t } from 'libs';
+import {parseConnectionUri} from './connectionUri';
 import styles from './index.module.less';
 
 
@@ -38,24 +42,46 @@ const TYPES = [
   {value: 'redis', label: 'Redis'},
 ];
 
+const GOVERNANCE_DEFAULTS = {
+  connect_timeout: 10,
+  query_timeout: 30,
+  idle_timeout: 30,
+  read_only: false,
+  environment: 'normal',
+};
+
+function initialValues(record) {
+  const values = record.id ? {...record, password: ''} : {
+    type: 'mysql', host: '127.0.0.1', port: 3306, use_ssl: false,
+  };
+  Object.entries(GOVERNANCE_DEFAULTS).forEach(([key, fallback]) => {
+    if (values[key] == null) values[key] = fallback;
+  });
+  return values;
+}
+
 export default function ConnectionForm({record, visible, onClose, onSaved}) {
   const [form] = Form.useForm();
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testState, setTestState] = useState();
+  const [uriVisible, setUriVisible] = useState(false);
+  const [connectionUri, setConnectionUri] = useState('');
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   useEffect(() => {
     if (visible) {
       setTestState(undefined);
+      setUriVisible(false);
+      setConnectionUri('');
+      setAdvancedOpen(false);
       form.resetFields();
-      form.setFieldsValue(record.id ? {...record, password: ''} : {
-        type: 'mysql', host: '127.0.0.1', port: 3306, use_ssl: false,
-      });
+      form.setFieldsValue(initialValues(record));
     }
   }, [form, record, visible]);
 
   function payload() {
-    return {...form.getFieldsValue(), id: record.id};
+    return {...form.getFieldsValue(true), id: record.id};
   }
 
   function validate() {
@@ -65,6 +91,18 @@ export default function ConnectionForm({record, visible, onClose, onSaved}) {
   function handleTypeChange(type) {
     setTestState(undefined);
     form.setFieldsValue({port: PORTS[type], database: type === 'redis' ? '0' : ''});
+  }
+
+  function handleUriImport() {
+    try {
+      form.setFieldsValue(parseConnectionUri(connectionUri));
+      setTestState(undefined);
+      setConnectionUri('');
+      setUriVisible(false);
+      message.success(t('连接 URI 已导入'));
+    } catch (error) {
+      message.error(t(error.message));
+    }
   }
 
   function handleTest() {
@@ -77,7 +115,7 @@ export default function ConnectionForm({record, visible, onClose, onSaved}) {
           message.success(t('连接成功'));
         }, () => setTestState({success: false}))
         .finally(() => setTesting(false));
-    });
+    }, () => {});
   }
 
   function handleSave() {
@@ -89,7 +127,7 @@ export default function ConnectionForm({record, visible, onClose, onSaved}) {
           onSaved();
         })
         .finally(() => setSaving(false));
-    });
+    }, () => {});
   }
 
   const title = (
@@ -135,6 +173,25 @@ export default function ConnectionForm({record, visible, onClose, onSaved}) {
         layout="vertical"
         requiredMark={false}
         onValuesChange={() => setTestState(undefined)}>
+        <div className={styles.importSection}>
+          <Button type="link" size="small" icon={<ImportOutlined/>}
+                  onClick={() => setUriVisible(current => !current)}>
+            {t('导入连接 URI')}
+          </Button>
+          {uriVisible && (
+            <div className={styles.uriImport}>
+              <Input
+                id="connection_uri"
+                value={connectionUri}
+                autoComplete="off"
+                placeholder="postgresql://user:password@host:5432/database"
+                onChange={event => setConnectionUri(event.target.value)}
+                onPressEnter={handleUriImport}/>
+              <Button type="primary" ghost onClick={handleUriImport}>{t('解析并填充')}</Button>
+            </div>
+          )}
+        </div>
+
         <div className={styles.formSection}>
           <div className={styles.formSectionTitle}>{t('数据库类型')}</div>
           <Form.Item name="type" rules={[{required: true}]}>
@@ -209,6 +266,57 @@ export default function ConnectionForm({record, visible, onClose, onSaved}) {
               </div>
             </Col>
           </Row>
+        </div>
+
+        <div className={styles.advancedSection}>
+          <Button type="text" className={styles.advancedToggle}
+                  aria-expanded={advancedOpen}
+                  aria-controls="advanced_settings"
+                  icon={advancedOpen ? <DownOutlined/> : <RightOutlined/>}
+                  onClick={() => setAdvancedOpen(current => !current)}>
+            {t('高级设置')}
+          </Button>
+          <div id="advanced_settings" className={styles.advancedContent} hidden={!advancedOpen}>
+            <Row gutter={16}>
+              <Col span={8}>
+                <Form.Item name="connect_timeout" label={t('连接超时（秒）')}
+                           rules={[{required: true, type: 'number', min: 1, max: 120}]}>
+                  <InputNumber min={1} max={120} style={{width: '100%'}}/>
+                </Form.Item>
+              </Col>
+              <Col span={8}>
+                <Form.Item name="query_timeout" label={t('查询超时（秒）')}
+                           rules={[{required: true, type: 'number', min: 1, max: 3600}]}>
+                  <InputNumber min={1} max={3600} style={{width: '100%'}}/>
+                </Form.Item>
+              </Col>
+              <Col span={8}>
+                <Form.Item name="idle_timeout" label={t('空闲超时（分钟，0 禁用）')}
+                           rules={[{required: true, type: 'number', min: 0, max: 1440}]}>
+                  <InputNumber min={0} max={1440} style={{width: '100%'}}/>
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <div className={styles.settingRow}>
+                  <div>
+                    <strong>{t('只读连接')}</strong>
+                    <span>{t('限制为只读查询')}</span>
+                  </div>
+                  <Form.Item name="read_only" valuePropName="checked" noStyle>
+                    <Switch/>
+                  </Form.Item>
+                </div>
+              </Col>
+              <Col span={12}>
+                <Form.Item name="environment" label={t('运行环境')}>
+                  <Radio.Group className={styles.environmentSelector}>
+                    <Radio.Button value="normal">{t('普通')}</Radio.Button>
+                    <Radio.Button value="production">{t('生产')}</Radio.Button>
+                  </Radio.Group>
+                </Form.Item>
+              </Col>
+            </Row>
+          </div>
         </div>
       </Form>
     </Modal>
