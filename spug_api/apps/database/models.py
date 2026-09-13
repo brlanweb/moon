@@ -22,6 +22,10 @@ class DatabaseConnection(models.Model, ModelMixin):
         ('clickhouse', 'ClickHouse'),
         ('redis', 'Redis'),
     )
+    ENVIRONMENTS = (
+        ('normal', '普通环境'),
+        ('production', '生产环境'),
+    )
     DEFAULT_PORTS = {
         'mysql': 3306,
         'mariadb': 3306,
@@ -40,6 +44,9 @@ class DatabaseConnection(models.Model, ModelMixin):
     use_ssl = models.BooleanField(default=False)
     connect_timeout = models.PositiveIntegerField(default=10)
     query_timeout = models.PositiveIntegerField(default=30)
+    idle_timeout = models.PositiveIntegerField(default=30)
+    environment = models.CharField(max_length=20, choices=ENVIRONMENTS, default='normal')
+    read_only = models.BooleanField(default=False)
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='+')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

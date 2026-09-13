@@ -6,6 +6,13 @@ from apps.database.client import DatabaseClientError, execute, metadata, test_co
 from apps.database.models import DatabaseConnection
 
 
+class _StrictInteger(int):
+    def __new__(cls, value):
+        if isinstance(value, (bool, float)):
+            raise ValueError
+        return super().__new__(cls, value)
+
+
 def _connection_form(body, partial=False):
     return JsonParser(
         Argument('id', type=int, required=False),
@@ -17,10 +24,16 @@ def _connection_form(body, partial=False):
         Argument('password', required=False, default=''),
         Argument('database', required=False, default=''),
         Argument('use_ssl', type=bool, default=False),
-        Argument('connect_timeout', type=int, default=10,
+        Argument('connect_timeout', type=_StrictInteger, default=10,
                  filter=lambda x: 1 <= x <= 120, help='连接超时必须在 1～120 秒之间'),
-        Argument('query_timeout', type=int, default=30,
+        Argument('query_timeout', type=_StrictInteger, default=30,
                  filter=lambda x: 1 <= x <= 3600, help='查询超时必须在 1～3600 秒之间'),
+        Argument('idle_timeout', type=_StrictInteger, default=30,
+                 filter=lambda x: 0 <= x <= 1440, help='空闲断开必须在 0～1440 分钟之间'),
+        Argument('environment', default='normal',
+                 filter=lambda x: x in dict(DatabaseConnection.ENVIRONMENTS),
+                 help='连接环境必须是 normal 或 production'),
+        Argument('read_only', type=bool, default=False),
     ).parse(body, partial)
 
 
@@ -30,6 +43,8 @@ def _temporary_connection(form):
         port=form.port, username=form.get('username') or '',
         database=form.get('database') or '', use_ssl=form.get('use_ssl') or False,
         connect_timeout=form.connect_timeout, query_timeout=form.query_timeout,
+        idle_timeout=form.idle_timeout, environment=form.environment,
+        read_only=form.read_only,
     )
     item.set_password(form.get('password') or '')
     return item
@@ -94,7 +109,8 @@ def check_connection(request):
         if not item:
             return json_response(error='数据库连接不存在')
         for key in ('name', 'type', 'host', 'port', 'username', 'database', 'use_ssl',
-                    'connect_timeout', 'query_timeout'):
+                    'connect_timeout', 'query_timeout', 'idle_timeout', 'environment',
+                    'read_only'):
             setattr(item, key, form.get(key))
     else:
         item = _temporary_connection(form)

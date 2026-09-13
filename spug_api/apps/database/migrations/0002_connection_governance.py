@@ -20,4 +20,19 @@ class Migration(migrations.Migration):
             name='query_timeout',
             field=models.PositiveIntegerField(default=30),
         ),
+        migrations.AddField(
+            model_name='databaseconnection',
+            name='idle_timeout',
+            field=models.PositiveIntegerField(default=30),
+        ),
+        migrations.AddField(
+            model_name='databaseconnection',
+            name='environment',
+            field=models.CharField(choices=[('normal', '普通环境'), ('production', '生产环境')], default='normal', max_length=20),
+        ),
+        migrations.AddField(
+            model_name='databaseconnection',
+            name='read_only',
+            field=models.BooleanField(default=False),
+        ),
     ]
