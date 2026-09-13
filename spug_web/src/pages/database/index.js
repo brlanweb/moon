@@ -53,6 +53,7 @@ export default function DatabaseConsole() {
   const sessionGenerationRef = useRef({});
   const requestGenerationRef = useRef({});
   const selectionGenerationRef = useRef({});
+  const disconnectConnectionRef = useRef();
 
   connectionsRef.current = connections;
   tabsRef.current = tabs;
@@ -72,7 +73,7 @@ export default function DatabaseConsole() {
         const runningQueries = inFlightQueriesRef.current[item.id] || 0;
         if (timeout > 0 && runningQueries === 0 && lastActivity !== undefined &&
             now - lastActivity >= timeout * 60 * 1000) {
-          disconnectConnection(item.id);
+          disconnectConnectionRef.current(item.id);
           message.info(t('连接【{}】因空闲已断开', item.name));
         }
       });
@@ -168,6 +169,7 @@ export default function DatabaseConsole() {
         !value.startsWith(`item-${id}-`);
     }));
   }
+  disconnectConnectionRef.current = disconnectConnection;
 
   function fetchConnections() {
     setFetching(true);
