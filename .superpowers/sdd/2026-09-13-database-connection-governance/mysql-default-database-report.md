@@ -87,3 +87,32 @@
 - 前端测试输出包含 Node `punycode` deprecation warning。
 - 后端测试输出包含 Paramiko/Cryptography TripleDES deprecation warning。
 - 两类提示均为既有依赖告警，不影响本次测试结果。
+
+## 审查问题修复追加
+
+### 修复内容
+
+- QueryPanel 仅在 MySQL/MariaDB 且存在活动数据库时附加 `database`；PostgreSQL、ClickHouse、Redis 不再发送空数据库覆盖。
+- execute API 先解析连接标识并加载连接，再仅对 MySQL/MariaDB 的请求级数据库覆盖执行非空字符串与 128 字符上限校验；非 MySQL 请求中的 `database` 字段被忽略。
+- metadata 请求开始时记录每连接的选择版本；用户随后选择 group 或 table 会推进版本，旧请求响应仍可刷新目录，但不会覆盖较新的活动数据库。没有新选择时仍按配置数据库或首个 metadata group 自动初始化。
+- 增加 Redis 非标量返回值经 `json.dumps(..., default=str)` 序列化的回归覆盖。
+- 增加 production 确认令牌在同一 `analytics` 数据库下二次请求成功，并验证调用 `execute(item, command, database='analytics')`。
+
+### TDD 证据
+
+红灯：
+
+- 前端新增测试首次运行共 21 项，4 项按预期失败：PG/ClickHouse 请求仍携带 `database: ''`；在途刷新响应覆盖了较新的 group/table 选择。
+- 后端聚焦运行 3 项，其中 PG/ClickHouse 的 `database: ''` 两个子测试按预期因全局 override 校验失败；Redis JSON 分支和同库确认令牌正向行为已由现有实现满足，新增测试首次即通过，未为其修改生产代码。
+
+绿灯：
+
+- `SPUG_DEBUG=true ./venv/bin/python manage.py test apps.database.test_policy apps.database.test_connections -v 2`：58 项通过。
+- `CI=true npm test -- --runInBand src/pages/database/DatabaseConsole.test.js src/pages/database/index.test.js src/pages/database/ConnectionForm.test.js src/pages/database/connectionUri.test.js`：4 个套件、60 项通过。
+- `git diff --check`：通过。
+
+### 范围与约束
+
+- 请求级数据库覆盖继续只传给 `_mysql`，未写回连接记录。
+- confirmation token 继续绑定用户、连接、命令与实际执行数据库；同库可确认执行，跨库重放仍拒绝。
+- 本次仅修改数据库 bugfix 文件及本报告；Docker 页面既有未提交改动未修改、未暂存。

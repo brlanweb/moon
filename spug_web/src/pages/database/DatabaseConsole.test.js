@@ -61,6 +61,17 @@ const CONNECTIONS = [
     type_alias: 'PostgreSQL',
     host: 'db-report',
     port: 5432,
+    database: '',
+    idle_timeout: 1,
+  },
+  {
+    id: 3,
+    name: '分析库',
+    type: 'clickhouse',
+    type_alias: 'ClickHouse',
+    host: 'db-analytics',
+    port: 8123,
+    database: '',
     idle_timeout: 1,
   },
 ];
@@ -492,6 +503,53 @@ test('metadata refresh restores the configured MySQL database', async () => {
 
   expect(document.querySelector('.ant-tabs-tabpane-active').textContent)
     .toContain('/ operations');
+});
+
+test.each([
+  ['group', 'analytics'],
+  ['table', 'daily_metrics'],
+])('metadata refresh does not replace a newer %s database selection', async (_, label) => {
+  const refreshRequest = deferred();
+  await renderConsole([{...CONNECTIONS[0], database: 'operations'}]);
+  http.get.mockImplementationOnce(() => Promise.resolve(METADATA))
+    .mockImplementationOnce(() => refreshRequest.promise);
+  await openConnection('主库');
+
+  act(() => findText('button', '刷新目录').click());
+  if (label === 'daily_metrics') {
+    act(() => findText('.ant-tree-title', 'analytics').closest('.ant-tree-treenode')
+      .querySelector('.ant-tree-switcher').click());
+    await flush();
+  }
+  act(() => findText('.ant-tree-title', label).closest('.ant-tree-node-content-wrapper').click());
+  await flush();
+  expect(document.querySelector('.ant-tabs-tabpane-active').textContent)
+    .toContain('/ analytics');
+
+  await act(async () => {
+    refreshRequest.resolve({groups: [{name: 'refreshed', items: ['new_table']}], truncated: false});
+    await Promise.resolve();
+  });
+  await flush();
+
+  expect(document.querySelector('.ant-tabs-tabpane-active').textContent)
+    .toContain('/ analytics');
+});
+
+test.each([
+  ['报表库', 2, 'SELECT version();'],
+  ['分析库', 3, 'SELECT version();'],
+])('does not send an empty database override for %s', async (name, id, command) => {
+  await renderConsole();
+  await openConnection(name);
+
+  act(() => findText('.ant-tabs-tabpane-active button', '运行').click());
+  await flush();
+
+  expect(http.post).toHaveBeenLastCalledWith('/api/database/execute/', {
+    id,
+    command,
+  }, {timeout: 45000});
 });
 
 test('closing a tab preserves the active database while disconnecting clears it', async () => {

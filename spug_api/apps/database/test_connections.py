@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 from django.test import RequestFactory, SimpleTestCase
 
 from apps.database.client import (
-    _clickhouse, _mysql, _postgresql, _redis, execute, test_connection,
+    _clickhouse, _mysql, _postgresql, _redis, _redis_execute, execute, test_connection,
 )
 from apps.database.models import DatabaseConnection
 from apps.database.views import (
@@ -247,6 +247,21 @@ class DriverTimeoutTests(SimpleTestCase):
         client.close.assert_called_once_with()
 
 
+class RedisExecutionTests(SimpleTestCase):
+    def test_non_scalar_result_is_json_serialized(self):
+        class RedisResult:
+            def __str__(self):
+                return 'serialized-result'
+
+        client = MagicMock()
+        client.execute_command.return_value = RedisResult()
+
+        result = _redis_execute(client, 'MODULE.RESULT')
+
+        self.assertEqual(result['columns'], ['value'])
+        self.assertEqual(result['rows'], [['"serialized-result"']])
+
+
 class RunCommandPolicyTests(SimpleTestCase):
     def setUp(self):
         self.connection = SimpleNamespace(
@@ -322,17 +337,21 @@ class RunCommandPolicyTests(SimpleTestCase):
     @patch('apps.database.views.DatabaseConnection.objects.filter')
     def test_non_mysql_request_database_does_not_override_connection(
             self, connections, execute_command):
-        self.connection.type = 'postgresql'
-        self.connection.environment = 'normal'
-        connections.return_value.first.return_value = self.connection
+        for database_type in ('postgresql', 'clickhouse'):
+            with self.subTest(database_type=database_type):
+                self.connection.type = database_type
+                self.connection.database = ''
+                self.connection.environment = 'normal'
+                connections.return_value.first.return_value = self.connection
 
-        response = run_command(self.request(
-            'SELECT * FROM users', database='analytics', include_database=True))
+                response = run_command(self.request(
+                    'SELECT * FROM users', database='', include_database=True))
 
-        payload = json.loads(response.content)
-        self.assertFalse(payload['error'])
-        execute_command.assert_called_once_with(
-            self.connection, 'SELECT * FROM users', database=None)
+                payload = json.loads(response.content)
+                self.assertFalse(payload['error'])
+                execute_command.assert_called_once_with(
+                    self.connection, 'SELECT * FROM users', database=None)
+                execute_command.reset_mock()
 
     @patch('apps.database.views.execute', return_value={})
     @patch('apps.database.views.DatabaseConnection.objects.filter')
@@ -367,6 +386,28 @@ class RunCommandPolicyTests(SimpleTestCase):
         payload = json.loads(response.content)
         self.assertEqual(payload['error'], '确认令牌无效或已过期')
         execute_command.assert_not_called()
+
+    @patch('apps.database.views.execute', return_value={'rows': [], 'affected': 1})
+    @patch('apps.database.views.DatabaseConnection.objects.filter')
+    def test_confirmation_token_executes_in_same_request_database(
+            self, connections, execute_command):
+        connections.return_value.first.return_value = self.connection
+        command = 'DELETE FROM users WHERE id = 3'
+        challenge = json.loads(run_command(self.request(
+            command, database='analytics', include_database=True)).content)['data']
+
+        response = run_command(self.request(
+            command,
+            challenge['confirmation_token'],
+            database='analytics',
+            include_database=True,
+        ))
+
+        payload = json.loads(response.content)
+        self.assertFalse(payload['error'])
+        self.assertEqual(payload['data'], {'rows': [], 'affected': 1})
+        execute_command.assert_called_once_with(
+            self.connection, command, database='analytics')
 
     @patch('apps.database.views.execute')
     @patch('apps.database.views.DatabaseConnection.objects.filter')

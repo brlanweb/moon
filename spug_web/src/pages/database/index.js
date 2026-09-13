@@ -50,6 +50,7 @@ export default function DatabaseConsole() {
   const activeIdRef = useRef(activeId);
   const lastActivityRef = useRef({});
   const requestGenerationRef = useRef({});
+  const selectionGenerationRef = useRef({});
 
   connectionsRef.current = connections;
   tabsRef.current = tabs;
@@ -92,6 +93,7 @@ export default function DatabaseConsole() {
 
   function selectActiveDatabase(item, database) {
     if (!isMySQLConnection(item)) return;
+    selectionGenerationRef.current[item.id] = (selectionGenerationRef.current[item.id] || 0) + 1;
     setActiveDatabases(current => ({...current, [item.id]: database}));
   }
 
@@ -205,12 +207,15 @@ export default function DatabaseConsole() {
       return;
     }
     const generation = nextRequestGeneration(item.id);
+    const selectionGeneration = selectionGenerationRef.current[item.id] || 0;
     setConnectingId(item.id);
     http.get('/api/database/metadata/', {params: {id: item.id}})
       .then(data => {
         if (requestGenerationRef.current[item.id] !== generation) return;
         setMetadata(current => ({...current, [item.id]: data}));
-        initializeActiveDatabase(item, data);
+        if ((selectionGenerationRef.current[item.id] || 0) === selectionGeneration) {
+          initializeActiveDatabase(item, data);
+        }
         activate();
         if (data.truncated) message.warning(t('对象较多，目录仅展示前 5000 项'));
       })

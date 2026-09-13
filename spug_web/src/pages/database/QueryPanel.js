@@ -49,11 +49,14 @@ export default function QueryPanel({connection, activeDatabase, command, onComma
       return;
     }
     setRunning(true);
-    http.post('/api/database/execute/', {
+    const payload = {
       id: connection.id,
       command: statement,
-      database: activeDatabase,
-    }, {timeout: 45000})
+    };
+    if ((connection.type === 'mysql' || connection.type === 'mariadb') && activeDatabase) {
+      payload.database = activeDatabase;
+    }
+    http.post('/api/database/execute/', payload, {timeout: 45000})
       .then(setResult)
       .finally(() => setRunning(false));
   }
