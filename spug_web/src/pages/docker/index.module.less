@@ -1,3 +1,29 @@
+.hostMetricsHeader {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+  span { color: #64748b; font-size: 12px; }
+}
+.hostMetricsGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.hostMetricChart {
+  min-width: 0;
+  padding: 16px 12px 0;
+  background: #fff;
+  border: 1px solid #e2e7ec;
+  border-radius: 8px;
+}
+.hostMetricEmpty { height: 170px; display: grid; place-items: center; color: #64748b; }
+@media (max-width: 600px) {
+  .hostMetricsGrid { grid-template-columns: minmax(0, 1fr); }
+}
+
 .workspace {
   display: flex;
   flex-direction: column;

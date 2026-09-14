@@ -7,6 +7,8 @@ import {Modal, message} from 'antd';
 import {hasPermission, http} from 'libs';
 import DockerConsole, {resolveSection} from './index';
 
+jest.mock('bizcharts', () => ({Chart: ({children}) => <div>{children}</div>, Geom: () => null, Axis: () => null, Tooltip: () => null}));
+
 jest.mock('libs', () => ({
   t: (text, ...values) => values.reduce((result, value) => result.replace('{}', value), text),
   hasPermission: jest.fn(() => true),
@@ -515,6 +517,19 @@ test('leaving Compose clears the parent dirty state', async () => {
 
   await host(2);
   expect(confirm).not.toHaveBeenCalled();
+});
+
+test('host metrics render even while Docker engine overview is pending', async () => {
+  const now = Date.now() / 1000;
+  http.get.mockImplementation(url => Promise.resolve(url === '/api/host/'
+    ? [{id: 901, name: 'metric-host', hostname: '192.0.2.1'}]
+    : {host_id: 901, server_time: now, sampled_at: now,
+      history: [{ts: now, cpu: 73, memory: 42, gpu: [], gpu_status: 'absent'}]}));
+  http.post.mockImplementation(() => new Promise(() => {}));
+  await render({section: 'overview'});
+  await host(901);
+  expect(root.textContent).toContain('73%');
+  expect(root.textContent).toContain('未检测到 GPU');
 });
 
 test('unsaved compose changes block route navigation and can still be saved', async () => {

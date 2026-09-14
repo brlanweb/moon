@@ -12,6 +12,7 @@ import { ACEditor } from 'components';
 import { hasPermission, http, t, X_TOKEN } from 'libs';
 import { Prompt, useHistory, useLocation } from 'react-router-dom';
 import CreateProject from './CreateProject';
+import HostMetrics from './HostMetrics';
 import Resources from './Resources';
 import { clearDockerCache, readDockerCache, writeDockerCache } from './cache';
 import styles from './index.module.less';
@@ -115,6 +116,14 @@ export default function DockerConsole({section, location, path, match} = {}) {
 }
 
 function OverviewPanel({hostId, onNavigate}) {
+  if (hostId === undefined) return <Empty description={t('请先选择服务器')}/>;
+  return <>
+    <HostMetrics hostId={hostId}/>
+    <ContainerOverview hostId={hostId} onNavigate={onNavigate}/>
+  </>;
+}
+
+function ContainerOverview({hostId, onNavigate}) {
   const [data, setData] = useState();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
