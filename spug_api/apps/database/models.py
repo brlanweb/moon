@@ -60,7 +60,11 @@ class DatabaseConnection(models.Model, ModelMixin):
         try:
             return _cipher().decrypt(self.password.encode('ascii')).decode('utf-8')
         except (InvalidToken, ValueError):
-            # 兼容已有明文数据，下一次保存时会自动转为密文。
+            if self.password.startswith('gAAAA'):
+                # Never send an encrypted token as a database password when the
+                # deployment key changed or the stored token is damaged.
+                raise ValueError('已保存的数据库密码无法解密，请编辑连接，重新输入密码并保存') from None
+            # 兼容旧版明文密码；显式修改密码时将重新加密。
             return self.password
 
     def to_view(self):
