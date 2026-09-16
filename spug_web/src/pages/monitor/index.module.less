@@ -54,3 +54,12 @@
     }
 }
 
+
+@media (max-width: 768px) {
+  .steps { width: 100%; max-width: 100%; }
+}
+@media (max-width: 768px) {
+  .filters { width: 100%; }
+  .filters > :global(.ant-space-item) { max-width: 100%; }
+  .filters :global(.ant-space-item) > div { white-space: nowrap; }
+}

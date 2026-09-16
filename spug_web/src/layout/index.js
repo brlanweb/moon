@@ -61,7 +61,7 @@ export default function () {
           <Sider collapsed={false}/>
         </Drawer>
       ) : <Sider collapsed={collapsed}/>}
-      <Layout style={{height: '100vh', minWidth: 0}}>
+      <Layout className={styles.frame}>
         <Header collapsed={mobile ? !drawerOpen : collapsed}
                 toggle={() => mobile ? setDrawerOpen(!drawerOpen) : setCollapsed(!collapsed)}/>
         <Layout.Content className={styles.content} id="spug-container">

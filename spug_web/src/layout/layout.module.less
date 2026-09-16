@@ -234,3 +234,13 @@
     }
   }
 }
+
+.frame { height: 100vh; height: 100dvh; min-width: 0; }
+.content { min-height: 0; }
+.header { flex-shrink: 0; }
+@media (max-width: 768px) {
+  .content { --moon-content-padding: 12px; padding-bottom: env(safe-area-inset-bottom, 0px); }
+  .header .terminal, .header .trigger { width: 44px; }
+  .header .left { min-width: 44px; }
+  .content > * { min-width: 0; }
+}

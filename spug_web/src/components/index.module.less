@@ -312,3 +312,29 @@
     margin-bottom: 16px;
   }
 }
+@media (max-width: 768px) {
+  .searchForm { padding: 14px 14px 0; margin-bottom: 12px; }
+  .tableCard { padding: 14px; }
+  .tableCard .toolbar { align-items: flex-start; }
+  .tableCard .toolbar .title { flex-basis: 100%; }
+  .tableCard .toolbar .option { width: 100%; justify-content: flex-start; }
+  .tableCard .toolbar .option .icons :global(.anticon) { width: 40px; height: 40px; }
+  .tableCard :global(.ant-table-cell) { min-width: 96px; }
+  .tableCard :global(.ant-table-selection-column) { min-width: 40px; }
+  .breadcrumb { margin-bottom: 12px; padding-top: 12px; padding-bottom: 12px; }
+  .breadcrumb .title { font-size: 18px; }
+  .appSelector { flex-direction: column; min-height: 0; }
+  .appSelector .left { flex: auto; max-height: 220px; overflow: auto; border-right: 0; }
+  .appSelector .right { flex: auto; min-width: 0; padding: 16px; }
+  .appSelector .title .text { width: auto; max-width: 100%; }
+  .statisticsCard p { font-size: 26px; }
+  .notFound { flex-direction: column; padding: 24px 12px; }
+  .notFound .imgBlock { width: 100%; padding-right: 0; }
+  .notFound .imgBlock .img { height: 180px; }
+  .notFound .title { font-size: 48px; line-height: 1.2; }
+}
+@media (max-width: 575px) {
+  .searchForm :global(.ant-form-item) { display: block; }
+  .tableCard .toolbar .option > :global(.ant-space):first-child { margin-right: 0 !important; width: 100%; }
+  .tableCard .toolbar .option > :global(.ant-divider) { display: none; }
+}

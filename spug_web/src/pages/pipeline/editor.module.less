@@ -60,3 +60,11 @@
   display: flex;
   flex-direction: row;
 }
+
+@media (max-width: 768px) {
+  .container { margin: -12px -12px 0; min-width: 0; }
+  .header { height: auto; min-height: 56px; padding: 12px; flex-wrap: wrap; gap: 8px; }
+  .header .title { overflow-wrap: anywhere; }
+  .body { min-width: 0; }
+  .body .nodes { height: calc(100dvh - 116px); padding: 12px; overscroll-behavior-x: contain; }
+}

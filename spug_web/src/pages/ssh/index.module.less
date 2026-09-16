@@ -225,3 +225,19 @@
   height: 22px;
   width: 22px;
 }
+@media (max-width: 768px) {
+  .container { flex-direction: column; height: 100dvh; min-height: 0; }
+  .container .sider { width: 100% !important; flex: none; max-height: 25dvh; overflow: auto; }
+  .container .sider .split { display: none; }
+  .container .sider .logo { display: none; }
+  .container .sider .hosts :global(.ant-tree) { height: auto; max-height: 17dvh; }
+  .container .content { min-width: 0; min-height: 0; overflow: auto; }
+  .container .content .fig, .container .content .fig2 { padding: 64px 12px; }
+  .terminal { margin: 8px; }
+  .terminal :global(.xterm) { height: calc(75dvh - 118px); min-height: 180px; }
+  .metricsBar { margin: 8px 8px 0; }
+  .container .content .fileManger { margin: 8px; padding: 8px; height: calc(75dvh - 58px); overflow: auto; }
+  .drawerHeader { height: auto; flex-wrap: wrap; gap: 8px; }
+  .drawerHeader :global(.ant-breadcrumb) { flex-basis: 100%; margin-right: 0; }
+  .drawerHeader .edit { display: inline-block; margin-left: 8px; }
+}

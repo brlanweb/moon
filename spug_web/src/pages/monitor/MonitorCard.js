@@ -69,7 +69,7 @@ function MonitorCard({resourceOnly = false}) {
   const filteredRecords = records.filter(x => !status || x.status === status)
   return (
     <Card title={t('总览')} style={{marginBottom: 24}} bodyStyle={{padding: '12px 24px'}} extra={(
-      <Space size="middle">
+      <Space wrap size="middle" className={styles.filters}>
         <Space>
           <div>{t('分组：')}</div>
           <Select allowClear style={{minWidth: 150}} value={store.f_group} onChange={v => store.f_group = v}

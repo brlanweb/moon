@@ -50,7 +50,7 @@ export default function () {
 
   return (
     <Card loading={loading} title={t('报警趋势')} bodyStyle={{height: 353}} extra={(
-      <Cascader changeOnSelect style={{width: 260}} options={options} onChange={handleChange} placeholder={t('过滤监控项，默认所有')}/>
+      <Cascader changeOnSelect style={{width: 260, maxWidth: '100%'}} options={options} onChange={handleChange} placeholder={t('过滤监控项，默认所有')}/>
     )}>
       <Chart height={300} data={res} padding={[10, 10, 30, 35]} scale={{value: {alias: t('报警次数')}}} forceFit>
         <Axis name="date"/>

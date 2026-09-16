@@ -95,3 +95,53 @@ code {
     color: @link-hover-color;
   }
 }
+
+/* Shared mobile surfaces. Wide data stays scrollable inside its own panel. */
+html, body, #root { min-width: 0; }
+@media (max-width: 768px) {
+  body { overflow: auto; }
+  .ant-layout, .ant-layout-content, .ant-card, .ant-col { min-width: 0; }
+  .ant-table-wrapper { max-width: 100%; }
+  .ant-table-content, .ant-table-body { overflow-x: auto !important; overscroll-behavior-x: contain; }
+  .ant-pagination { display: flex; flex-wrap: wrap; gap: 4px 0; }
+  .ant-card-head { padding: 0 14px; }
+  .ant-card-head-wrapper { flex-wrap: wrap; gap: 0 8px; }
+  .ant-card-head-title { white-space: normal; overflow-wrap: anywhere; }
+  .ant-card-extra { max-width: 100%; }
+  .ant-card-body { padding: 14px; }
+  .ant-modal { top: 12px; max-width: calc(100vw - 24px); padding-bottom: 12px; }
+  .ant-modal-header, .ant-modal-body, .ant-modal-footer { padding: 16px; }
+  .ant-modal-title { padding-right: 20px; overflow-wrap: anywhere; }
+  .ant-modal-body { overflow-x: auto; }
+  .ant-modal-footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+  .ant-modal-footer .ant-btn + .ant-btn { margin-left: 0; }
+  .ant-drawer-content-wrapper { max-width: 100vw; }
+  .ant-drawer-header, .ant-drawer-body { padding: 16px; }
+  .ant-drawer-body .ant-space-horizontal, .ant-modal-body .ant-space-horizontal { flex-wrap: wrap; max-width: 100%; }
+  .ant-modal-body .ant-form, .ant-drawer-body .ant-form { max-width: 100%; }
+  .ant-modal-body .ant-alert { max-width: 100%; }
+  .ant-message-notice-content { max-width: calc(100vw - 24px); overflow-wrap: anywhere; }
+  .ant-notification-notice { max-width: calc(100vw - 24px); margin-right: 12px; }
+  .ant-popover-inner-content { max-width: calc(100vw - 24px); overflow-wrap: anywhere; }
+}
+@media (max-width: 575px) {
+  /* 16px avoids iOS zooming the viewport when editing a form. */
+  .ant-input, .ant-input-number-input, .ant-select-selection-search-input { font-size: 16px; }
+  .ant-input:not(textarea), .ant-input-affix-wrapper, .ant-input-number { min-height: 40px; }
+  .ant-input-affix-wrapper .ant-input { min-height: 0; }
+  .ant-select-single:not(.ant-select-customize-input) .ant-select-selector { min-height: 40px; align-items: center; }
+  .ant-btn:not(.ant-btn-circle):not(.ant-btn-round) { min-height: 40px; }
+  .ant-form-item { margin-bottom: 16px; }
+  .ant-form .ant-col { max-width: 100%; }
+  .ant-form-item-control-input-content > .ant-select,
+  .ant-form-item-control-input-content > .ant-input-group-wrapper,
+  .ant-form-item-control-input-content > .ant-picker { max-width: 100%; }
+  .ant-modal-body .ant-form > .ant-row > .ant-col { flex: 0 0 100%; max-width: 100%; margin-left: 0; }
+  .ant-modal-confirm-body .ant-modal-confirm-content { margin-left: 0; }
+  .ant-modal-confirm-btns { display: flex; flex-wrap: wrap; gap: 8px; }
+}
+@media (max-width: 575px) {
+  .ant-picker-dropdown .ant-picker-panels { flex-direction: column; }
+  .ant-picker-dropdown .ant-picker-panel-container { max-width: calc(100vw - 16px); max-height: 75dvh; overflow: auto; }
+  .ant-picker-dropdown .ant-picker-footer-extra { white-space: normal; }
+}

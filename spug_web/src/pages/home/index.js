@@ -18,11 +18,11 @@ function HomeIndex() {
         <Breadcrumb.Item>{t('首页')}</Breadcrumb.Item>
         <Breadcrumb.Item>{t('工作台')}</Breadcrumb.Item>
       </Breadcrumb>
-      <Row gutter={12}>
-        <Col span={16}>
+      <Row gutter={[12, 12]}>
+        <Col xs={24} lg={16}>
           <TodoIndex/>
         </Col>
-        <Col span={8}>
+        <Col xs={24} lg={8}>
           <NoticeIndex/>
         </Col>
       </Row>

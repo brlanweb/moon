@@ -29,3 +29,12 @@
 .keyText {
     font-family: "Bitstream Vera Sans Mono", Monaco, "Courier New", Courier, monospace;
 }
+@media (max-width: 768px) {
+  .container { flex-direction: column; padding: 0; }
+  .left { flex: none; border-right: 0; border-bottom: 1px solid #e8e8e8; overflow-x: auto; }
+  .left :global(.ant-menu) { display: flex; min-width: max-content; }
+  .left :global(.ant-menu-item) { width: auto; flex: none; margin: 0; }
+  .right { min-width: 0; padding: 16px; }
+  .right > * { max-width: 100%; }
+  .keyText { overflow-wrap: anywhere; }
+}

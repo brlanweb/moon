@@ -25,8 +25,8 @@ export default class StatisticCard extends React.Component {
   render() {
     const {res, loading} = this.state;
     return (
-      <Row gutter={16} style={{marginBottom: 20}}>
-        <Col span={6}>
+      <Row gutter={[16, 12]} style={{marginBottom: 20}}>
+        <Col xs={12} lg={6}>
           <Card loading={loading}>
             <Statistic
               title={t('应用')}
@@ -35,7 +35,7 @@ export default class StatisticCard extends React.Component {
               formatter={v => <a href="/deploy/app">{v}</a>}/>
           </Card>
         </Col>
-        <Col span={6}>
+        <Col xs={12} lg={6}>
           <Card loading={loading}>
             <Statistic
               title={t('主机')}
@@ -44,7 +44,7 @@ export default class StatisticCard extends React.Component {
               formatter={v => <a href="/host">{v}</a>}/>
           </Card>
         </Col>
-        <Col span={6}>
+        <Col xs={12} lg={6}>
           <Card loading={loading}>
             <Statistic
               title={t('任务')}
@@ -53,7 +53,7 @@ export default class StatisticCard extends React.Component {
               formatter={v => <a href="/schedule">{v}</a>}/>
           </Card>
         </Col>
-        <Col span={6}>
+        <Col xs={12} lg={6}>
           <Card loading={loading}>
             <Statistic
               title={t('监控')}

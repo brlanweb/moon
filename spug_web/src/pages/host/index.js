@@ -37,10 +37,10 @@ export default observer(function () {
       </Breadcrumb>
 
       <Row gutter={12}>
-        <Col span={6}>
+        <Col xs={24} md={7} lg={6}>
           <Group/>
         </Col>
-        <Col span={18}>
+        <Col xs={24} md={17} lg={18}>
           <ComTable/>
         </Col>
       </Row>

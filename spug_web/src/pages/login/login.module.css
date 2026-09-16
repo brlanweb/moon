@@ -173,3 +173,9 @@
   .codeButton:global(.ant-btn) { margin-top: 0; width: 100%; }
 }
 @media (prefers-reduced-motion: reduce) { .moon { animation: none; } .container * { transition: none !important; } }
+
+@media (max-width: 760px) {
+  .container { min-height: 100dvh; }
+  .formSection { min-height: 0; padding-top: 28px; padding-bottom: 32px; }
+  .formContainer :global(.ant-input) { font-size: 16px; }
+}

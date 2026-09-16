@@ -236,3 +236,23 @@
   .editorArea { min-height: 380px; }
   .resourceHostSelect { width: 100%; }
 }
+
+@media (max-width: 768px) {
+  .workspace { height: auto; min-height: calc(100dvh - 72px); overflow: visible; }
+  .workspaceHeader { flex-direction: column; align-items: stretch; }
+  .hostPicker { width: 100%; max-width: none; }
+  .workspaceBody { min-width: 0; overflow: visible; }
+  .workspaceTabs { max-width: 100%; }
+  .page:not(.resourcePage) { grid-template-columns: minmax(0, 1fr); height: auto; }
+  .sidebar { max-height: 260px; border-right: 0; border-bottom: 1px solid #e5e7eb; }
+  .projectSpin { flex: 1 1 100px; }
+  .content { overflow: visible; }
+  .editorArea { min-height: 400px; }
+  .toolbar > :global(.ant-space), .overviewActions { flex-wrap: wrap; }
+  .configBar { flex-wrap: wrap; }
+  .configBar > :global(.ant-select) { min-width: 0 !important; max-width: 100% !important; width: 100%; }
+  .resourcePage { height: auto; min-height: 60dvh; }
+  .resourcePanel { overflow: auto; }
+  .logs { min-height: 320px; }
+  .logSearch { width: 100%; }
+}

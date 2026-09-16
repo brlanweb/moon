@@ -54,7 +54,7 @@ function NavIndex(props) {
                          onClick={() => setIsEdit(!isEdit)}>{isEdit ? t('完成') : t('编辑')}</AuthButton>}>
       {isEdit ? (
         <Row gutter={24}>
-          <Col span={6} style={{marginBottom: 24}}>
+          <Col xs={24} sm={12} xl={6} style={{marginBottom: 24}}>
             <div
               className={styles.add}
               onClick={() => setRecord({links: [{}]})}>
@@ -63,7 +63,7 @@ function NavIndex(props) {
             </div>
           </Col>
           {records.map(item => (
-            <Col key={item.id} span={6} style={{marginBottom: 24}}>
+            <Col key={item.id} xs={24} sm={12} xl={6} style={{marginBottom: 24}}>
               <Card hoverable actions={[
                 <LeftSquareOutlined onClick={() => handleSort(item, 'up')}/>,
                 <RightSquareOutlined onClick={() => handleSort(item, 'down')}/>,
@@ -81,7 +81,7 @@ function NavIndex(props) {
       ) : (
         <Row gutter={24}>
           {records.map(item => (
-            <Col key={item.id} span={6} style={{marginBottom: 24}}>
+            <Col key={item.id} xs={24} sm={12} xl={6} style={{marginBottom: 24}}>
               <Card
                 hoverable
                 actions={item.links.map(x => <a href={x.url} rel="noopener noreferrer" target="_blank">{x.name}</a>)}>

@@ -228,13 +228,13 @@ export default function ConnectionForm({record, visible, onClose, onSaved}) {
         <div className={styles.formSection}>
           <div className={styles.formSectionTitle}>{t('连接信息')}</div>
           <Row gutter={16}>
-            <Col span={12}>
+            <Col xs={24} sm={12}>
               <Form.Item name="name" label={t('连接名称')}
                          rules={[{required: true, message: t('请输入连接名称')}]}>
                 <Input maxLength={64} placeholder={t('例如：生产库')}/>
               </Form.Item>
             </Col>
-            <Col span={12}>
+            <Col xs={24} sm={12}>
               <Form.Item noStyle shouldUpdate={(prev, next) => prev.type !== next.type}>
                 {({getFieldValue}) => getFieldValue('type') === 'redis' ? (
                   <Form.Item name="database" label={t('数据库编号')}>
@@ -247,13 +247,13 @@ export default function ConnectionForm({record, visible, onClose, onSaved}) {
                 )}
               </Form.Item>
             </Col>
-            <Col span={16}>
+            <Col xs={24} sm={16}>
               <Form.Item name="host" label={t('主机地址')}
                          rules={[{required: true, message: t('请输入主机地址')}]}>
                 <Input placeholder="127.0.0.1"/>
               </Form.Item>
             </Col>
-            <Col span={8}>
+            <Col xs={24} sm={8}>
               <Form.Item name="port" label={t('端口')}
                          rules={[{required: true, message: t('请输入端口')}]}>
                 <InputNumber min={1} max={65535} style={{width: '100%'}}/>
@@ -265,12 +265,12 @@ export default function ConnectionForm({record, visible, onClose, onSaved}) {
         <div className={styles.formSection}>
           <div className={styles.formSectionTitle}>{t('认证与安全')}</div>
           <Row gutter={16}>
-            <Col span={12}>
+            <Col xs={24} sm={12}>
               <Form.Item name="username" label={t('用户名')}>
                 <Input autoComplete="off" placeholder={t('可选')}/>
               </Form.Item>
             </Col>
-            <Col span={12}>
+            <Col xs={24} sm={12}>
               <Form.Item name="password" label={t('密码')}>
                 <Input.Password autoComplete="new-password"
                                 placeholder={record.id ? t('留空则保持原密码') : t('可选')}/>
@@ -300,25 +300,25 @@ export default function ConnectionForm({record, visible, onClose, onSaved}) {
           </Button>
           <div id="advanced_settings" className={styles.advancedContent} hidden={!advancedOpen}>
             <Row gutter={16}>
-              <Col span={8}>
+              <Col xs={24} sm={8}>
                 <Form.Item name="connect_timeout" label={t('连接超时（秒）')}
                            rules={[{required: true, type: 'number', min: 1, max: 120}]}>
                   <InputNumber min={1} max={120} style={{width: '100%'}}/>
                 </Form.Item>
               </Col>
-              <Col span={8}>
+              <Col xs={24} sm={8}>
                 <Form.Item name="query_timeout" label={t('查询超时（秒）')}
                            rules={[{required: true, type: 'number', min: 1, max: 3600}]}>
                   <InputNumber min={1} max={3600} style={{width: '100%'}}/>
                 </Form.Item>
               </Col>
-              <Col span={8}>
+              <Col xs={24} sm={8}>
                 <Form.Item name="idle_timeout" label={t('空闲超时（分钟，0 禁用）')}
                            rules={[{required: true, type: 'number', min: 0, max: 1440}]}>
                   <InputNumber min={0} max={1440} style={{width: '100%'}}/>
                 </Form.Item>
               </Col>
-              <Col span={12}>
+              <Col xs={24} sm={12}>
                 <div className={styles.settingRow}>
                   <div>
                     <strong>{t('只读连接')}</strong>
@@ -329,7 +329,7 @@ export default function ConnectionForm({record, visible, onClose, onSaved}) {
                   </Form.Item>
                 </div>
               </Col>
-              <Col span={12}>
+              <Col xs={24} sm={12}>
                 <Form.Item name="environment" label={t('运行环境')}>
                   <Radio.Group className={styles.environmentSelector}>
                     <Radio.Button value="normal">{t('普通')}</Radio.Button>

@@ -753,3 +753,15 @@ test('double clicking a database expands it and synchronizes the execution Selec
   expect(root.querySelector('.ant-tabs-tabpane-active .ant-select-selection-item').textContent).toBe('analytics');
   expect(findText('.ant-tabs-tabpane-active button', '断开连接')).toBeDefined();
 });
+
+test('connection navigation collapses after opening and can be reopened without closing the query', async () => {
+  await renderConsole();
+  const toggle = root.querySelector('button[aria-controls="database-sources"]');
+  expect(toggle.getAttribute('aria-expanded')).toBe('true');
+  await openConnection('主库');
+  expect(toggle.getAttribute('aria-expanded')).toBe('false');
+  expect(root.querySelector('[aria-label="database-command"]')).not.toBeNull();
+  act(() => toggle.click());
+  expect(toggle.getAttribute('aria-expanded')).toBe('true');
+  expect(root.querySelector('[aria-label="database-command"]')).not.toBeNull();
+});

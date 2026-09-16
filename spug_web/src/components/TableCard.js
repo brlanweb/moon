@@ -4,7 +4,7 @@
  * Released under the AGPL-3.0 License.
  */
 import React, { useState, useEffect, useRef } from 'react';
-import { Table, Space, Divider, Popover, Checkbox, Button, Input, Select } from 'antd';
+import { Table, Space, Divider, Popover, Checkbox, Button, Input, Select, Grid } from 'antd';
 import { ReloadOutlined, SettingOutlined, FullscreenOutlined, SearchOutlined } from '@ant-design/icons';
 import { t } from 'libs';
 import styles from './index.module.less';
@@ -124,6 +124,7 @@ function Header(props) {
 
 function TableCard(props) {
   const rootRef = useRef();
+  const screens = Grid.useBreakpoint();
   const batchActions = props.batchActions || [];
   const selected = props.selected || [];
   const [fields, setFields] = useState([]);
@@ -178,7 +179,7 @@ function TableCard(props) {
         onReload={props.onReload}/>
       <Table
         tableLayout={props.tableLayout}
-        scroll={props.scroll}
+        scroll={screens.md === false ? {x: 'max-content', ...props.scroll} : props.scroll}
         rowKey={props.rowKey}
         loading={props.loading}
         columns={columns.filter((_, index) => fields.includes(index))}

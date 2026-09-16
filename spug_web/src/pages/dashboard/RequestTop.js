@@ -51,14 +51,14 @@ export default function () {
 
   return (
     <Card loading={loading} title={t('发布申请Top20')} style={{marginTop: 20}} bodyStyle={{height: 353}} extra={(
-      <div style={{display: 'flex', alignItems: 'center'}}>
+      <div style={{display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8}}>
         <span className={range === 'day' ? styles.spanButtonActive : styles.spanButton}
               onClick={() => handleClick('day')}>{t('今日')}</span>
         <span className={range === 'week' ? styles.spanButtonActive : styles.spanButton}
               onClick={() => handleClick('week')}>{t('本周')}</span>
         <span className={range === 'month' ? styles.spanButtonActive : styles.spanButton}
               onClick={() => handleClick('month')}>{t('本月')}</span>
-        <DatePicker.RangePicker allowClear={false} style={{width: 250}} value={duration} onChange={handleClick}/>
+        <DatePicker.RangePicker allowClear={false} style={{width: 250, maxWidth: '100%'}} value={duration} onChange={handleClick}/>
       </div>
     )}>
       <Chart height={300} data={res} padding={[10, 0, 30, 35]} scale={{count: {alias: t('发布申请数量')}}} forceFit>

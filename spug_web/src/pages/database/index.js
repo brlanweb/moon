@@ -34,6 +34,7 @@ function quoteName(type, value) {
 
 export default function DatabaseConsole() {
   const [connections, setConnections] = useState([]);
+  const [sourcesOpen, setSourcesOpen] = useState(true);
   const [metadata, setMetadata] = useState({});
   const [fetching, setFetching] = useState(true);
   const [connectingId, setConnectingId] = useState();
@@ -236,6 +237,7 @@ export default function DatabaseConsole() {
     if (!item) return;
     const nodeKey = `connection-${item.id}`;
     const activate = () => {
+      setSourcesOpen(false);
       markActivity(item.id);
       setTabs(current => current.includes(item.id) ? current : [...current, item.id]);
       setActiveId(item.id);
@@ -331,9 +333,9 @@ export default function DatabaseConsole() {
           <span className={styles.connectionName}>{item.name}</span>
           {connectionMenu(item).items.length > 0 && (
             <Dropdown trigger={['click']} menu={connectionMenu(item)}>
-              <span className={styles.connectionAction} onClick={event => event.stopPropagation()}>
+              <button type="button" aria-label={t('连接操作')} className={styles.connectionAction} onClick={event => event.stopPropagation()}>
                 <MoreOutlined/>
-              </span>
+              </button>
             </Dropdown>
           )}
         </span>
@@ -387,8 +389,15 @@ export default function DatabaseConsole() {
   }
 
   return (
-    <div className={styles.container}>
-      <aside className={styles.sider}>
+    <div className={`${styles.container} ${sourcesOpen ? "" : styles.sourcesClosed}`}>
+      <div className={styles.mobileNavigation}>
+        <Button icon={<DatabaseOutlined/>} aria-expanded={sourcesOpen} aria-controls="database-sources"
+                onClick={() => setSourcesOpen(value => !value)}>
+          {sourcesOpen ? t('收起连接列表') : t('连接与目录')}
+        </Button>
+        <a href="/dashboard">{t('返回控制台')}</a>
+      </div>
+      <aside id="database-sources" className={styles.sider}>
         <a className={styles.logo} href="/dashboard" target="_blank" rel="noreferrer">
           <MoonBrand/>
         </a>
@@ -437,7 +446,7 @@ export default function DatabaseConsole() {
         ) : (
           <div className={styles.empty}>
             <Empty image={<DatabaseOutlined style={{fontSize: 64, color: '#cbd5e1'}}/>}
-                   description={t('点击左侧连接源进入数据库工作台')}/>
+                   description={t('选择连接源进入数据库工作台')}/>
           </div>
         )}
       </main>

@@ -10,7 +10,8 @@ import styles from './index.module.less';
 export default class extends React.Component {
   static Item(props) {
     return (
-      <Col span={props.span} offset={props.offset} style={props.style}>
+      <Col xs={{span: 24, offset: 0}} sm={{span: 12, offset: 0}}
+           md={{span: props.span || 24, offset: props.offset || 0}} style={props.style}>
         <Form.Item label={props.title}>
           {props.children}
         </Form.Item>

@@ -211,3 +211,14 @@
   .modeSwitch :global(.ant-segmented-item-label) { padding: 0 8px; }
 }
 @media (prefers-reduced-motion: reduce) { .caret { animation: none; } }
+
+@media (max-width: 768px) {
+  .container { height: calc(100dvh - 138px); min-height: 360px; }
+  .chatHeader { flex-wrap: wrap; gap: 8px; }
+  .chatHeader > .chatHeading { flex: 1; max-width: none; }
+  .metricsInline { order: 3; flex-basis: 100%; }
+  .historyOpen .sider { top: 94px; }
+  .composer textarea { font-size: 16px; }
+  .sendButton { width: 40px; height: 40px; }
+  .confirmActions { flex-wrap: wrap; }
+}
