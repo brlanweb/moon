@@ -20,6 +20,7 @@ from django.conf import settings
 from django.core.cache import cache
 from django.db import connection
 from django.test import RequestFactory, TestCase
+from django.utils import timezone
 
 from apps.account.models import Role, User
 from apps.account.views import RoleView, UserView
@@ -77,7 +78,7 @@ class SecurityContractTests(TestCase):
         self.role.group_perms = [self.group.id]
         self.role.save(update_fields=['group_perms'])
         self.token, self.plaintext = service.create_token(
-            self.user, 'contract-token', 7, [self.allowed.id])
+            self.user, 'contract-token', 7)
 
     @staticmethod
     def make_user(username, **kwargs):
@@ -157,13 +158,13 @@ class SecurityContractTests(TestCase):
         base = datetime(2030, 1, 1)
         ticks = iter(base + timedelta(microseconds=i) for i in range(100))
         with patch('django.utils.timezone.now', side_effect=lambda: next(ticks)):
-            token, _ = service.create_token(self.user, 'anchor', 1, [self.allowed.id])
+            token, _ = service.create_token(self.user, 'anchor', 1)
         self.assertEqual(token.expires_at - token.created_at, timedelta(days=1))
 
     def lifetime_contract(self, days):
         base = datetime(2030, 1, 1, 12, 0, 0, 123456)
         with patch('django.utils.timezone.now', return_value=base):
-            token, plaintext = service.create_token(self.user, 'fixed', days, [self.allowed.id])
+            token, plaintext = service.create_token(self.user, 'fixed', days)
         boundary = base + timedelta(days=days)
         self.assertEqual(token.created_at, base)
         self.assertEqual(token.expires_at, boundary)
@@ -182,26 +183,41 @@ class SecurityContractTests(TestCase):
         self.assertEqual(token.expires_at, boundary)
         self.assert_audit_safe(plaintext)
 
-    def test_expired_token_regeneration_replaces_once_and_revokes_old(self):
+    def test_expired_token_refresh_is_in_place_and_invalidates_old_secret(self):
         base = datetime(2030, 1, 1)
         self.token.expires_at = base
         self.token.save(update_fields=['expires_at'])
+        before = McpToken.objects.count()
         with patch('django.utils.timezone.now', return_value=base):
             with self.assertRaises(service.AuthorizationError):
                 service.authenticate_token(self.plaintext)
-            replacement, plaintext = service.regenerate_token(self.token, self.user, 30)
-            self.assertEqual(replacement.expires_at, base + timedelta(days=30))
-            self.assertEqual(service.authenticate_token(plaintext).id, replacement.id)
+            refreshed, plaintext = service.regenerate_token(self.token, self.user, 30)
+            self.assertEqual(refreshed.id, self.token.id)
+            self.assertEqual(refreshed.expires_at, base + timedelta(days=30))
+            self.assertEqual(service.authenticate_token(plaintext).id, self.token.id)
             with self.assertRaises(service.AuthorizationError):
                 service.authenticate_token(self.plaintext)
             self.token.refresh_from_db()
-            self.assertIsNotNone(self.token.revoked_at)
-            self.assertEqual(self.token.replaced_by_id, replacement.id)
+            self.assertIsNone(self.token.revoked_at)
+            self.assertIsNone(self.token.replaced_by_id)
             self.assertFalse(plaintext == self.plaintext)
-            before = McpToken.objects.count()
-            with self.assertRaises(ValueError):
-                service.regenerate_token(self.token, self.user, 1)
             self.assertEqual(McpToken.objects.count(), before)
+            # A second refresh rotates again; the previous secret stops working.
+            again, second = service.regenerate_token(self.token, self.user, 365)
+            self.assertEqual(again.id, self.token.id)
+            with self.assertRaises(service.AuthorizationError):
+                service.authenticate_token(plaintext)
+            self.assertEqual(service.authenticate_token(second).id, self.token.id)
+            self.assertEqual(McpToken.objects.count(), before)
+
+    def test_legacy_revoked_token_cannot_be_refreshed(self):
+        self.token.revoked_at = timezone.now()
+        self.token.save(update_fields=['revoked_at'])
+        digest = self.token.token_digest
+        with self.assertRaisesRegex(ValueError, '已撤销'):
+            service.regenerate_token(self.token, self.user, 7)
+        self.token.refresh_from_db()
+        self.assertEqual(self.token.token_digest, digest)
 
     def test_invalid_regeneration_is_atomic_old_token_still_works(self):
         before = McpToken.objects.count()
@@ -212,9 +228,9 @@ class SecurityContractTests(TestCase):
         self.assertEqual(McpToken.objects.count(), before)
         self.assertEqual(service.authenticate_token(self.plaintext).id, self.token.id)
 
-    def test_revocation_effective_on_next_rpc(self):
+    def test_deletion_effective_on_next_rpc(self):
         self.rpc('list_servers')
-        service.revoke_token(self.token)
+        service.delete_token(self.token, self.user)
         self.assert_rpc_rejected('execute_script', {'host_id': 1, 'script': 'uptime'})
         self.run_ssh.assert_not_called()
 
@@ -246,25 +262,14 @@ class SecurityContractTests(TestCase):
         self.run_ssh.assert_not_called()
         self.assert_audit_safe()
 
-    def test_host_permission_loss_is_effective_without_reissuing_token(self):
-        self.rpc('list_servers')
-        response = self.request(RoleView, 'patch', self.admin,
-                                {'id': self.role.id, 'group_perms': []})
-        self.assertFalse(response['error'])
-        token = service.authenticate_token(self.plaintext)
-        self.assertEqual(service.list_authorized_hosts(token), [])
-        self.assert_rpc_rejected('execute_script', {'host_id': 1, 'script': 'uptime'})
-        self.run_ssh.assert_not_called()
-
-    def test_both_token_scope_and_live_user_scope_are_required(self):
-        self.group.hosts.add(self.denied)
-        self.assert_rpc_rejected('execute_script', {'host_id': 2, 'script': 'uptime'})
-        self.run_ssh.assert_not_called()
-        self.token.hosts.add(self.denied)
-        self.group.hosts.remove(self.denied)
-        self.assert_rpc_rejected('execute_script', {'host_id': 2, 'script': 'uptime'})
-        self.run_ssh.assert_not_called()
-        self.assertEqual([row['id'] for row in service.list_authorized_hosts(self.token)], [1])
+    def test_all_registered_hosts_visible_including_new_ones(self):
+        self.assertEqual([row['id'] for row in service.list_authorized_hosts(self.token)], [1, 2])
+        created = Host.objects.create(name='new', hostname='192.0.2.50', port=22,
+                                      username='root', created_by=self.admin)
+        ids = [row['id'] for row in service.list_authorized_hosts(self.token)]
+        self.assertIn(created.id, ids)
+        result = service.execute_script(self.token, 2, 'uptime')
+        self.assertEqual(result['status'], 'success')
 
     def test_unregistered_host_and_arbitrary_ssh_target_rejected(self):
         self.assert_rpc_rejected('execute_script', {'host_id': 999999, 'script': 'uptime'})
@@ -276,28 +281,12 @@ class SecurityContractTests(TestCase):
         self.assert_rpc_rejected('execute_script', {'host_id': value, 'script': 'uptime'})
         self.run_ssh.assert_not_called()
 
-    def invalid_create_host_contract(self, value):
-        before = McpToken.objects.count()
-        response = self.request(TokenView, 'post', body={
-            'name': 'invalid-host', 'days': 1, 'host_ids': [value]})
-        self.assertTrue(response['error'], 'Malformed host ID accepted by management API')
-        self.assertEqual(McpToken.objects.count(), before)
-
     def invalid_days_contract(self, value):
         before = McpToken.objects.count()
         response = self.request(TokenView, 'post', body={
-            'name': 'invalid-days', 'days': value, 'host_ids': [1]})
+            'name': 'invalid-days', 'days': value})
         self.assertTrue(response['error'], 'Non-enumerated or non-integer lifetime accepted')
         self.assertEqual(McpToken.objects.count(), before)
-
-    def test_creation_rejects_empty_and_unauthorized_host_sets(self):
-        for host_ids in ([], [2], [1, 2], [999999]):
-            with self.subTest(host_ids=host_ids):
-                before = McpToken.objects.count()
-                response = self.request(TokenView, 'post', body={
-                    'name': 'invalid-scope', 'days': 1, 'host_ids': host_ids})
-                self.assertTrue(response['error'])
-                self.assertEqual(McpToken.objects.count(), before)
 
     def invalid_timeout_contract(self, value):
         self.assert_rpc_rejected('execute_script', {
@@ -425,12 +414,12 @@ class SecurityContractTests(TestCase):
     def test_token_name_upper_bound_is_enforced(self):
         before = McpToken.objects.count()
         response = self.request(TokenView, 'post', body={
-            'name': 'n' * 101, 'days': 1, 'host_ids': [1]})
+            'name': 'n' * 101, 'days': 1})
         self.assertTrue(response['error'], 'Token name exceeds model limit')
         self.assertEqual(McpToken.objects.count(), before)
 
     def seed_foreign_audit(self):
-        token, _ = service.create_token(self.admin, 'foreign-token', 1, [2])
+        token, _ = service.create_token(self.admin, 'foreign-token', 1)
         log = McpAuditLog.objects.create(
             token=token, operator=self.admin, operation='execute_script', host=self.denied,
             host_name=self.denied.name, script='private-host-script-marker',
@@ -455,51 +444,55 @@ class SecurityContractTests(TestCase):
         self.assertFalse(any(row['id'] == log.id and row.get('script') for row in self.audit_rows(response)),
                          'Historical ownership bypasses current host permissions')
 
-    def test_scoped_token_list_hides_other_owners_and_unauthorized_hosts(self):
+    def test_scoped_token_list_hides_other_owners(self):
         foreign, _ = self.seed_foreign_audit()
         response = self.request(TokenView)
         self.assertFalse(response['error'])
         self.assertNotIn(foreign.id, [row['id'] for row in response['data']['tokens']],
                          'Scoped operator can enumerate another owner token')
-        self.assertEqual([row['id'] for row in response['data']['hosts']], [1])
+        self.assertNotIn('hosts', response['data'])
 
-    def test_cannot_revoke_another_owner_token(self):
+    def test_cannot_delete_another_owner_token(self):
         foreign, _ = self.seed_foreign_audit()
+        digest = foreign.token_digest
         response = self.request(TokenView, 'delete', body={'id': foreign.id})
+        self.assertTrue(response['error'], 'Scoped operator deleted a foreign token')
         foreign.refresh_from_db()
-        self.assertTrue(response['error'], 'Scoped operator revoked a foreign token')
-        self.assertIsNone(foreign.revoked_at)
+        self.assertEqual(foreign.token_digest, digest)
+        with self.assertRaises(service.AuthorizationError):
+            service.delete_token(foreign, self.user)
+        self.assertTrue(McpToken.objects.filter(pk=foreign.pk).exists())
 
-    def test_cannot_regenerate_foreign_token_even_for_shared_host(self):
-        foreign, _ = service.create_token(self.admin, 'shared-host-foreign', 1, [1])
-        before = McpToken.objects.count()
+    def test_cannot_refresh_foreign_token(self):
+        foreign, foreign_plaintext = service.create_token(self.admin, 'foreign', 1)
+        digest = foreign.token_digest
         response = self.request(RegenerateView, 'post', body={'id': foreign.id, 'days': 7})
-        foreign.refresh_from_db()
         self.assertTrue(response['error'], 'Scoped operator took over another owner token')
-        self.assertIsNone(foreign.revoked_at)
-        self.assertEqual(McpToken.objects.count(), before)
+        with self.assertRaises(service.AuthorizationError):
+            service.regenerate_token(foreign, self.user, 7)
+        foreign.refresh_from_db()
+        self.assertEqual(foreign.token_digest, digest)
+        self.assertEqual(service.authenticate_token(foreign_plaintext).id, foreign.id)
 
-    def test_active_regeneration_invalidates_existing_rpc_context_immediately(self):
+    def test_active_refresh_invalidates_existing_rpc_context_immediately(self):
         self.rpc('list_servers')
-        replacement, plaintext = service.regenerate_token(self.token, self.user, 7)
+        refreshed, plaintext = service.regenerate_token(self.token, self.user, 7)
         self.assert_rpc_rejected('execute_script', {'host_id': 1, 'script': 'uptime'})
         self.run_ssh.assert_not_called()
         result = self.rpc('execute_script', {'host_id': 1, 'script': 'uptime'},
-                          plaintext=plaintext, token=replacement)
+                          plaintext=plaintext, token=refreshed)
         self.assertFalse(getattr(result, 'isError', False))
         self.assertEqual(self.run_ssh.call_count, 1)
 
-    def test_regeneration_cannot_mint_superuser_bearer_for_unauthorized_host(self):
-        foreign, _ = self.seed_foreign_audit()
-        response = self.request(RegenerateView, 'post', body={'id': foreign.id, 'days': 1})
-        if response['error']:
-            foreign.refresh_from_db()
-            self.assertIsNone(foreign.revoked_at)
-            return
-        replacement = McpToken.objects.get(pk=response['data']['id'])
-        self.assert_rpc_rejected('execute_script', {'host_id': 2, 'script': 'uptime'},
-                                 plaintext=response['data']['token'], token=replacement)
-        self.run_ssh.assert_not_called()
+    def test_superuser_can_refresh_and_delete_any_token(self):
+        refreshed = self.request(RegenerateView, 'post', self.admin, {'id': self.token.id, 'days': 1})
+        self.assertFalse(refreshed['error'])
+        self.assertEqual(refreshed['data']['id'], self.token.id)
+        with self.assertRaises(service.AuthorizationError):
+            service.authenticate_token(self.plaintext)
+        response = self.request(TokenView, 'delete', self.admin, {'id': self.token.id})
+        self.assertFalse(response['error'])
+        self.assertFalse(McpToken.objects.filter(pk=self.token.pk).exists())
 
     def test_superuser_can_inspect_global_audit_and_token_metadata(self):
         foreign, log = self.seed_foreign_audit()
@@ -556,23 +549,24 @@ class SecurityContractTests(TestCase):
         response = self.request(AuditView, user=self.admin, body={'page': 1, 'page_size': 100})
         self.assertEqual(len(self.audit_rows(response)), 1)
 
-    def test_authorized_owner_can_regenerate_and_revoke_via_views(self):
+    def test_authorized_owner_can_refresh_and_delete_via_views(self):
         response = self.request(RegenerateView, 'post', body={'id': self.token.id, 'days': 1})
         self.assertFalse(response['error'])
-        self.token.refresh_from_db()
-        self.assertIsNotNone(self.token.revoked_at)
-        replacement = McpToken.objects.get(pk=response['data']['id'])
-        self.assertEqual(replacement.user_id, self.user.id)
-        self.assertEqual(service.authenticate_token(response['data']['token']).id, replacement.id)
-        response = self.request(TokenView, 'delete', body={'id': replacement.id})
+        self.assertEqual(response['data']['id'], self.token.id)
+        with self.assertRaises(service.AuthorizationError):
+            service.authenticate_token(self.plaintext)
+        refreshed = response['data']['token']
+        self.assertEqual(service.authenticate_token(refreshed).id, self.token.id)
+        response = self.request(TokenView, 'delete', body={'id': self.token.id})
         self.assertFalse(response['error'])
-        replacement.refresh_from_db()
-        self.assertIsNotNone(replacement.revoked_at)
+        self.assertFalse(McpToken.objects.filter(pk=self.token.id).exists())
+        with self.assertRaises(service.AuthorizationError):
+            service.authenticate_token(refreshed)
 
     def test_page_permission_is_required_for_management_and_logs(self):
         for view, method, body in (
                 (TokenView, 'get', None), (AuditView, 'get', None),
-                (TokenView, 'post', {'name': 'x', 'days': 1, 'host_ids': [1]}),
+                (TokenView, 'post', {'name': 'x', 'days': 1}),
                 (TokenView, 'delete', {'id': self.token.id}),
                 (RegenerateView, 'post', {'id': self.token.id, 'days': 1})):
             with self.subTest(view=view.__name__, method=method):
@@ -580,7 +574,7 @@ class SecurityContractTests(TestCase):
                 self.assertTrue(response['error'])
                 self.assertFalse(response['data'])
         self.token.refresh_from_db()
-        self.assertIsNone(self.token.revoked_at)
+        self.assertEqual(service.authenticate_token(self.plaintext).id, self.token.id)
 
 
 # Separate generated tests give a real per-input result, without printing credentials.
@@ -590,7 +584,7 @@ def _case(method, value):
     return test
 
 
-for _days in (1, 7, 30):
+for _days in (1, 7, 30, 180, 365):
     setattr(SecurityContractTests, f'test_lifetime_{_days}_days_absolute_boundary',
             _case(SecurityContractTests.lifetime_contract, _days))
 
@@ -599,11 +593,9 @@ for _label, _value in (
         ('numeric_string', '1'), ('none', None), ('list', [1]), ('zero', 0), ('negative', -1)):
     setattr(SecurityContractTests, f'test_rpc_host_id_rejects_{_label}',
             _case(SecurityContractTests.invalid_host_contract, _value))
-    setattr(SecurityContractTests, f'test_create_host_id_rejects_{_label}',
-            _case(SecurityContractTests.invalid_create_host_contract, _value))
 
 for _label, _value in (('bool', True), ('float', 1.9), ('numeric_string', '7'),
-                       ('zero', 0), ('two', 2), ('above_max', 31)):
+                       ('zero', 0), ('two', 2), ('thirty_one', 31), ('above_max', 366)):
     setattr(SecurityContractTests, f'test_duration_rejects_{_label}',
             _case(SecurityContractTests.invalid_days_contract, _value))
 

@@ -61,7 +61,7 @@ def seed():
     django.setup()
     from apps.account.models import Role, User
     from apps.host.models import Group, Host
-    from apps.mcp_ops.service import create_token, revoke_token
+    from apps.mcp_ops.service import create_token
     from django.utils import timezone
     user = User.objects.create(username='http-operator', nickname='HTTP Operator', password_hash='x',
                                type='default', is_active=True, is_deleted=False)
@@ -74,12 +74,13 @@ def seed():
     user.roles.add(role)
     credentials = {'host_id': host.id}
     for name in ('active', 'expired', 'revoked'):
-        token, plaintext = create_token(user, name, 1, [host.id])
+        token, plaintext = create_token(user, name, 1)
         if name == 'expired':
             token.expires_at = timezone.now() - timedelta(seconds=1)
             token.save(update_fields=['expires_at'])
         elif name == 'revoked':
-            revoke_token(token)
+            token.revoked_at = timezone.now()
+            token.save(update_fields=['revoked_at'])
         credentials[name] = plaintext
         credentials[name + '_id'] = token.id
     return credentials
@@ -98,7 +99,8 @@ async def run_client_checks(port, credentials):
         async with Client(streamable_http_client(url, http_client=transport)) as client:
             tools = await client.list_tools()
             names = {item.name for item in tools.tools}
-            assert names == {'list_servers', 'check_connection', 'execute_script'}
+            assert names == {'list_servers', 'check_connection', 'execute_script',
+                             'create_upload_link', 'create_download_link'}
             result = await client.call_tool('list_servers', {})
             assert not result.is_error and result.structured_content['result'][0]['id'] == credentials['host_id']
             checked = await client.call_tool('check_connection', {'host_id': credentials['host_id']})

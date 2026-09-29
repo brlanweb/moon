@@ -21,7 +21,7 @@ beforeAll(() => {
 
 test('loads token and audit records under mcp permission', async () => {
   http.get
-    .mockResolvedValueOnce({tokens: [{id: 1, name: 'CI', status: 'active', token_prefix: 'moon_abc', username: 'ops', host_ids: [2], expires_at: '2026-09-10T00:00:00'}], hosts: []})
+    .mockResolvedValueOnce({tokens: [{id: 1, name: 'CI', status: 'active', token_prefix: 'moon_abc', username: 'ops', expires_at: '2026-09-10T00:00:00'}]})
     .mockResolvedValueOnce({records: [{id: 9, operation: 'list_servers', status: 'success', operator: 'ops', created_at: '2026-09-09T00:00:00'}], total: 1});
   const root = document.createElement('div');
   await act(async () => {

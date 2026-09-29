@@ -22,7 +22,8 @@ export default observer(function AuditTable() {
     <Select allowClear style={{width: 130}} placeholder="状态" value={store.logStatus} onChange={value => store.logStatus = value}
             options={['success', 'failed', 'rejected'].map(value => ({value, label: value}))}/>
     <Select allowClear style={{width: 180}} placeholder="操作" value={store.logOperation} onChange={value => store.logOperation = value}
-            options={['authenticate', 'list_servers', 'check_connection', 'execute_script'].map(value => ({value, label: value}))}/>
+            options={['authenticate', 'list_servers', 'check_connection', 'execute_script',
+              'create_upload_link', 'create_download_link', 'upload_file', 'download_file'].map(value => ({value, label: value}))}/>
     <Button icon={<SearchOutlined/>} onClick={refresh}>筛选</Button>
   </Space>];
   return <>

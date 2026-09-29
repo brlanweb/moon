@@ -45,19 +45,27 @@ class McpOperationTests(TestCase):
         role.save(update_fields=['group_perms'])
 
     def test_create_only_returns_plaintext_once_and_stores_digest(self):
-        token, plaintext = create_token(self.user, 'CI', 1, [self.allowed.id])
+        token, plaintext = create_token(self.user, 'CI', 1)
         self.assertTrue(plaintext.startswith('moon_'))
         self.assertEqual(token.token_digest, hashlib.sha256(plaintext.encode()).hexdigest())
         self.assertNotIn(plaintext, json.dumps(token.to_view()))
         self.assertLessEqual(token.expires_at, token.created_at + timedelta(days=1, seconds=1))
 
-    def test_duration_is_limited_to_fixed_choices_and_thirty_days(self):
-        for days in (0, 2, 31):
+    def test_duration_is_limited_to_fixed_choices(self):
+        for days in (0, 2, 31, 90, 181, 366, 730):
             with self.subTest(days=days), self.assertRaises(ValueError):
-                create_token(self.user, 'invalid', days, [self.allowed.id])
+                create_token(self.user, 'invalid', days)
+
+    def test_six_month_and_one_year_lifetimes_are_accepted(self):
+        for days in (180, 365):
+            with self.subTest(days=days):
+                token, _ = create_token(self.user, f'long-{days}', days)
+                delta = token.expires_at - token.created_at
+                self.assertGreaterEqual(delta, timedelta(days=days) - timedelta(seconds=1))
+                self.assertLessEqual(delta, timedelta(days=days, seconds=1))
 
     def test_expiry_boundary_revocation_regeneration_and_disabled_user_reject(self):
-        token, plaintext = create_token(self.user, 'CI', 7, [self.allowed.id])
+        token, plaintext = create_token(self.user, 'CI', 7)
         token.expires_at = timezone.now()
         token.save(update_fields=['expires_at'])
         with self.assertRaises(AuthorizationError):
@@ -66,29 +74,33 @@ class McpOperationTests(TestCase):
 
         token.expires_at = timezone.now() + timedelta(days=7)
         token.save(update_fields=['expires_at'])
-        replacement, new_plaintext = regenerate_token(token, self.user, 30)
+        refreshed, new_plaintext = regenerate_token(token, self.user, 30)
         token.refresh_from_db()
-        self.assertIsNotNone(token.revoked_at)
+        self.assertEqual(refreshed.id, token.id)
+        self.assertIsNone(token.revoked_at)
         with self.assertRaises(AuthorizationError):
             authenticate_token(plaintext, '127.0.0.1')
-        self.assertEqual(authenticate_token(new_plaintext, '127.0.0.1').id, replacement.id)
+        self.assertEqual(authenticate_token(new_plaintext, '127.0.0.1').id, token.id)
 
         self.user.is_active = False
         self.user.save(update_fields=['is_active'])
         with self.assertRaises(AuthorizationError):
             authenticate_token(new_plaintext, '127.0.0.1')
 
-    def test_only_currently_permitted_and_token_authorized_hosts_are_listed(self):
-        token, _ = create_token(self.user, 'CI', 1, [self.allowed.id])
-        token.hosts.add(self.denied)
-        hosts = list_authorized_hosts(token)
-        self.assertEqual([item['id'] for item in hosts], [self.allowed.id])
+    def test_all_registered_hosts_are_listed_including_hosts_added_later(self):
+        token, _ = create_token(self.user, 'CI', 1)
+        self.assertEqual([item['id'] for item in list_authorized_hosts(token)],
+                         [self.allowed.id, self.denied.id])
+        later = Host.objects.create(
+            name='later', hostname='192.0.2.12', port=22, username='root',
+            is_verified=True, created_by=self.user)
+        self.assertIn(later.id, [item['id'] for item in list_authorized_hosts(token)])
 
     @patch('apps.mcp_ops.service._run_ssh')
     def test_execute_rejects_unregistered_dangerous_and_limits_output(self, run_ssh):
-        token, _ = create_token(self.user, 'CI', 1, [self.allowed.id])
-        with self.assertRaises(AuthorizationError):
-            execute_script(token, self.denied.id, 'uptime', '127.0.0.1')
+        token, _ = create_token(self.user, 'CI', 1)
+        with self.assertRaisesRegex(AuthorizationError, '主机未登记'):
+            execute_script(token, 999999, 'uptime', '127.0.0.1')
         with self.assertRaises(AuthorizationError):
             execute_script(token, self.allowed.id, 'rm -rf /', '127.0.0.1')
         run_ssh.return_value = (0, 'x' * 70000)
@@ -103,41 +115,50 @@ class McpOperationTests(TestCase):
     @patch('apps.mcp_ops.service.Host.get_ssh')
     def test_connection_check_uses_registered_host_ssh(self, get_ssh):
         get_ssh.return_value.ping.return_value = True
-        token, _ = create_token(self.user, 'CI', 1, [self.allowed.id])
+        token, _ = create_token(self.user, 'CI', 1)
         from apps.mcp_ops.service import check_connection
         self.assertEqual(check_connection(token, self.allowed.id, '127.0.0.1'), {
             'host_id': self.allowed.id, 'connected': True})
         self.assertEqual(McpAuditLog.objects.get().operation, 'check_connection')
 
     def test_expired_token_can_be_regenerated_for_same_owner(self):
-        token, old_plaintext = create_token(self.user, 'expired', 1, [self.allowed.id])
+        token, old_plaintext = create_token(self.user, 'expired', 1)
         token.expires_at = timezone.now() - timedelta(seconds=1)
         token.save(update_fields=['expires_at'])
-        replacement, plaintext = regenerate_token(token, self.user, 1)
+        refreshed, plaintext = regenerate_token(token, self.user, 1)
         token.refresh_from_db()
-        self.assertEqual(replacement.user_id, self.user.id)
-        self.assertIsNotNone(token.revoked_at)
+        self.assertEqual(refreshed.id, token.id)
+        self.assertEqual(refreshed.user_id, self.user.id)
+        self.assertIsNone(token.revoked_at)
+        self.assertGreater(token.expires_at, timezone.now())
         with self.assertRaises(AuthorizationError):
             authenticate_token(old_plaintext)
-        self.assertEqual(authenticate_token(plaintext).id, replacement.id)
+        self.assertEqual(authenticate_token(plaintext).id, token.id)
 
-    def test_lost_role_and_lost_host_permission_are_immediate(self):
-        token, plaintext = create_token(self.user, 'CI', 1, [self.allowed.id])
+    def test_deleted_token_is_removed_and_rejected_immediately(self):
+        from apps.mcp_ops.models import McpToken
+        from apps.mcp_ops.service import delete_token
+        token, plaintext = create_token(self.user, 'CI', 1)
+        authenticate_token(plaintext)
+        delete_token(token, self.user)
+        self.assertFalse(McpToken.objects.filter(pk=token.pk).exists())
+        with self.assertRaisesRegex(AuthorizationError, '无效令牌'):
+            authenticate_token(plaintext)
+        # Audit history survives the deletion with the token reference cleared.
+        self.assertTrue(McpAuditLog.objects.filter(token__isnull=True).exists())
+
+    def test_lost_use_permission_is_immediate(self):
+        token, plaintext = create_token(self.user, 'CI', 1)
         self.user.roles.all().update(page_perms={})
         self.user.set_perms_cache()
         with self.assertRaisesRegex(AuthorizationError, '不再具有'):
             authenticate_token(plaintext)
-        role = self.user.roles.first()
-        role.page_perms = {'system': {'mcp': ['use']}}
-        role.group_perms = []
-        role.save()
-        self.user.set_perms_cache()
-        with self.assertRaisesRegex(AuthorizationError, '未登记、未授权'):
+        with self.assertRaisesRegex(AuthorizationError, '不再具有'):
             execute_script(token, self.allowed.id, 'uptime')
 
     @patch('apps.mcp_ops.service._run_ssh')
     def test_token_plaintext_is_redacted_from_script_output_and_failure(self, run_ssh):
-        token, plaintext = create_token(self.user, 'CI', 1, [self.allowed.id])
+        token, plaintext = create_token(self.user, 'CI', 1)
         run_ssh.return_value = (2, f'failed with {plaintext}')
         result = execute_script(token, self.allowed.id, f'echo {plaintext}', sensitive_values=(plaintext,))
         self.assertEqual(result['status'], 'failed')
@@ -146,7 +167,7 @@ class McpOperationTests(TestCase):
         self.assertIn('[REDACTED]', log.script + log.output)
 
     def test_timeout_and_concurrency_rejections_are_audited(self):
-        token, _ = create_token(self.user, 'CI', 1, [self.allowed.id])
+        token, _ = create_token(self.user, 'CI', 1)
         with self.assertRaisesRegex(AuthorizationError, '1 到 300'):
             execute_script(token, self.allowed.id, 'uptime', timeout=301)
         with patch('apps.mcp_ops.service._SEMAPHORE.acquire', return_value=False):
@@ -188,6 +209,7 @@ class OfficialSdkRegistrationTests(TestCase):
                 result = await client.list_tools()
                 self.assertEqual(
                     {item.name for item in result.tools},
-                    {'list_servers', 'check_connection', 'execute_script'})
+                    {'list_servers', 'check_connection', 'execute_script',
+                     'create_upload_link', 'create_download_link'})
 
         anyio.run(verify)

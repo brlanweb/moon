@@ -31,7 +31,6 @@ class McpToken(models.Model, ModelMixin):
         return {
             'id': self.id, 'name': self.name, 'token_prefix': self.token_prefix,
             'user_id': self.user_id, 'username': self.user.username,
-            'host_ids': list(self.hosts.values_list('id', flat=True)),
             'expires_at': self.expires_at.isoformat(),
             'revoked_at': self.revoked_at.isoformat() if self.revoked_at else None,
             'last_used_at': self.last_used_at.isoformat() if self.last_used_at else None,

@@ -11,6 +11,7 @@ django.setup()
 from starlette.applications import Starlette  # noqa: E402
 from starlette.routing import Mount  # noqa: E402
 from apps.mcp_ops.mcp_server import http_app, server, RESOURCE_URL, ISSUER_URL  # noqa: E402
+from apps.mcp_ops.files_http import routes as file_routes  # noqa: E402
 from mcp.server.auth.routes import create_protected_resource_routes  # noqa: E402
 from pydantic import AnyHttpUrl  # noqa: E402
 
@@ -21,10 +22,11 @@ async def lifespan(app):
         yield
 
 
+# File routes must precede the /mcp mount, otherwise the MCP app would swallow /mcp/files/*.
 application = Starlette(
     routes=create_protected_resource_routes(
         resource_url=AnyHttpUrl(RESOURCE_URL), authorization_servers=[AnyHttpUrl(ISSUER_URL)],
         scopes_supported=['mcp:operate'], resource_name='Moon Operations',
-    ) + [Mount('/mcp', app=http_app)],
+    ) + file_routes + [Mount('/mcp', app=http_app)],
     lifespan=lifespan,
 )

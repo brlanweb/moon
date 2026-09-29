@@ -2,41 +2,37 @@ from django.db.models import Q
 from django.views.generic import View
 
 from apps.account.utils import get_host_perms
-from apps.host.models import Host
 from apps.mcp_ops.models import McpAuditLog, McpToken
-from apps.mcp_ops.service import create_token, regenerate_token, revoke_token
+from apps.mcp_ops.service import TOKEN_DAYS, create_token, delete_token, regenerate_token
 from libs import Argument, JsonParser, auth, json_response
 
+_DAYS_HELP = '有效期只能是 1、7、30 天、6 个月或 1 年'
 
-def _visible_hosts(user):
-    query = Host.objects.all() if user.is_supper else Host.objects.filter(id__in=get_host_perms(user))
-    return [{'id': item.id, 'name': item.name, 'hostname': item.hostname} for item in query.order_by('name')]
+
+def _valid_days(value):
+    return type(value) is int and value in TOKEN_DAYS
 
 
 def _token_query(user):
-    query = McpToken.objects.select_related('user').prefetch_related('hosts')
+    query = McpToken.objects.select_related('user')
     return query if user.is_supper else query.filter(user=user)
 
 
 class TokenView(View):
     @auth('system.mcp.view')
     def get(self, request):
-        return json_response({
-            'tokens': [item.to_view() for item in _token_query(request.user)],
-            'hosts': _visible_hosts(request.user),
-        })
+        return json_response({'tokens': [item.to_view() for item in _token_query(request.user)]})
 
     @auth('system.mcp.add')
     def post(self, request):
         form, error = JsonParser(
             Argument('name', help='请输入令牌名称'),
-            Argument('days', filter=lambda value: type(value) is int and value in (1, 7, 30), help='有效期只能是 1、7 或 30 天'),
-            Argument('host_ids', type=list, help='请授权服务器'),
+            Argument('days', filter=_valid_days, help=_DAYS_HELP),
         ).parse(request.body)
         if error:
             return json_response(error=error)
         try:
-            token, plaintext = create_token(request.user, form.name, form.days, form.host_ids)
+            token, plaintext = create_token(request.user, form.name, form.days)
             data = token.to_view()
             data['token'] = plaintext
             return json_response(data)
@@ -51,7 +47,10 @@ class TokenView(View):
         token = _token_query(request.user).filter(pk=form.id).first()
         if not token:
             return json_response(error='令牌不存在')
-        revoke_token(token)
+        try:
+            delete_token(token, request.user)
+        except Exception as exc:
+            return json_response(error=str(exc))
         return json_response()
 
 
@@ -60,7 +59,7 @@ class RegenerateView(View):
     def post(self, request):
         form, error = JsonParser(
             Argument('id', type=int),
-            Argument('days', filter=lambda value: type(value) is int and value in (1, 7, 30), help='有效期只能是 1、7 或 30 天'),
+            Argument('days', filter=_valid_days, help=_DAYS_HELP),
         ).parse(request.body)
         if error:
             return json_response(error=error)
@@ -68,8 +67,8 @@ class RegenerateView(View):
         if not token:
             return json_response(error='令牌不存在')
         try:
-            replacement, plaintext = regenerate_token(token, request.user, form.days)
-            data = replacement.to_view()
+            refreshed, plaintext = regenerate_token(token, request.user, form.days)
+            data = refreshed.to_view()
             data['token'] = plaintext
             return json_response(data)
         except Exception as exc:

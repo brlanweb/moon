@@ -17,6 +17,7 @@ from apps.mcp_ops.service import (
     execute_script as execute_host_script,
     list_authorized_hosts,
 )
+from apps.mcp_ops.files import create_link as create_file_link
 
 RESOURCE_URL = __import__('os').environ.get('MOON_MCP_RESOURCE_URL', 'http://127.0.0.1:8000/mcp')
 ISSUER_URL = __import__('os').environ.get('MOON_MCP_ISSUER_URL', 'http://127.0.0.1:8000')
@@ -72,24 +73,43 @@ async def _current_token(context):
     return await sync_to_async(McpToken.objects.select_related('user').get, thread_sensitive=True)(pk=token_id)
 
 
-@server.tool(description='列出当前令牌授权且操作者当前仍有权限的 Moon 已登记服务器。')
+@server.tool(description='列出 Moon 全部已登记服务器。')
 async def list_servers(context: Context) -> list[dict]:
     token = await _current_token(context)
     return await sync_to_async(list_authorized_hosts, thread_sensitive=True)(token, _request_ip(context))
 
 
-@server.tool(description='检查一台已登记、已授权且当前仍有权限的服务器 SSH 连接。')
+@server.tool(description='检查一台已登记服务器的 SSH 连接。')
 async def check_connection(host_id: StrictInt, context: Context) -> dict:
     token = await _current_token(context)
     return await sync_to_async(check_host_connection, thread_sensitive=True)(
         token, host_id, _request_ip(context), (_TOKEN_VALUE.get(),))
 
 
-@server.tool(description='在一台已登记、已授权且当前仍有权限的服务器执行受限脚本；高危脚本拒绝，超时最多 300 秒，输出最多 64 KiB。')
+@server.tool(description='在一台已登记服务器执行受限脚本；高危脚本拒绝，超时最多 300 秒，输出最多 64 KiB。')
 async def execute_script(host_id: StrictInt, script: StrictStr, context: Context, timeout: StrictInt = 60) -> dict:
     token = await _current_token(context)
     return await sync_to_async(execute_host_script, thread_sensitive=True)(
         token, host_id, script, _request_ip(context), timeout, (_TOKEN_VALUE.get(),))
+
+
+@server.tool(description=(
+    '为已登记服务器上的文件创建一次性上传链接（30 分钟有效、仅可使用一次、单文件最大 1 GiB）。'
+    'remote_path 必须是允许目录内的绝对文件路径，上级目录必须已存在，同名文件会被原子覆盖。'
+    '拿到 url 后在本地执行：curl -fsS -T <本地文件> "<url>"，响应返回大小和 sha256。'))
+async def create_upload_link(host_id: StrictInt, remote_path: StrictStr, context: Context) -> dict:
+    token = await _current_token(context)
+    return await sync_to_async(create_file_link, thread_sensitive=True)(
+        token, host_id, remote_path, 'upload', _request_ip(context), (_TOKEN_VALUE.get(),))
+
+
+@server.tool(description=(
+    '为已登记服务器上的文件创建一次性下载链接（30 分钟有效、仅可使用一次、单文件最大 1 GiB）。'
+    'remote_path 必须是允许目录内的普通文件。拿到 url 后在本地执行：curl -fsS -o <本地文件> "<url>"。'))
+async def create_download_link(host_id: StrictInt, remote_path: StrictStr, context: Context) -> dict:
+    token = await _current_token(context)
+    return await sync_to_async(create_file_link, thread_sensitive=True)(
+        token, host_id, remote_path, 'download', _request_ip(context), (_TOKEN_VALUE.get(),))
 
 
 class ClientIpMiddleware:

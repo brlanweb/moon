@@ -3,7 +3,6 @@ import http from 'libs/http';
 
 class Store {
   tokens = [];
-  hosts = [];
   logs = [];
   logTotal = 0;
   logPage = 1;
@@ -17,7 +16,6 @@ class Store {
   fetchTokens = async () => {
     const data = await http.get('/api/mcp-admin/tokens/');
     this.tokens = data.tokens;
-    this.hosts = data.hosts;
   };
 
   fetchLogs = async () => {
@@ -37,7 +35,7 @@ class Store {
 }
 
 decorate(Store, {
-  tokens: observable, hosts: observable, logs: observable, logTotal: observable,
+  tokens: observable, logs: observable, logTotal: observable,
   logPage: observable, logPageSize: observable, logStatus: observable,
   logOperation: observable, logTokenId: observable,
   loading: observable, createVisible: observable,

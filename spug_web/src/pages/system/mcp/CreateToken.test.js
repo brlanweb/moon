@@ -8,7 +8,7 @@ import {showPlaintext} from './TokenTable';
 
 jest.mock('libs/http', () => ({post: jest.fn()}));
 jest.mock('./TokenTable', () => ({showPlaintext: jest.fn()}));
-jest.mock('./store', () => ({hosts: [], createVisible: true, fetch: jest.fn(() => Promise.resolve())}));
+jest.mock('./store', () => ({createVisible: true, fetch: jest.fn(() => Promise.resolve())}));
 jest.mock('antd', () => {
   const Form = ({children}) => <div>{children}</div>;
   Form.useForm = jest.fn();
@@ -48,7 +48,7 @@ test('invalid form stays open without submitting or leaking a rejected promise',
 });
 
 test('request rejection is handled without a second plaintext display', async () => {
-  validate.mockResolvedValue({name: 'CI', days: 7, host_ids: [1]});
+  validate.mockResolvedValue({name: 'CI', days: 7});
   http.post.mockRejectedValue(new Error('Synthetic request failure'));
   await submit();
   expect(http.post).toHaveBeenCalledTimes(1);
@@ -56,7 +56,7 @@ test('request rejection is handled without a second plaintext display', async ()
 });
 
 test('completion after closing does not update an unmounted component', async () => {
-  validate.mockResolvedValue({name: 'CI', days: 1, host_ids: [1]});
+  validate.mockResolvedValue({name: 'CI', days: 1});
   let complete;
   http.post.mockReturnValue(new Promise(resolve => { complete = resolve; }));
   await submit();

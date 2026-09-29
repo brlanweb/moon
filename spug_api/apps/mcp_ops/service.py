@@ -9,12 +9,11 @@ from datetime import timedelta
 from django.db import transaction
 from django.utils import timezone
 
-from apps.account.utils import get_host_perms
 from apps.ai.risk import check_command
 from apps.host.models import Host
 from apps.mcp_ops.models import McpAuditLog, McpToken
 
-TOKEN_DAYS = (1, 7, 30)
+TOKEN_DAYS = (1, 7, 30, 180, 365)
 MAX_OUTPUT_BYTES = 64 * 1024
 MAX_SCRIPT_BYTES = 32 * 1024
 MAX_TIMEOUT = 300
@@ -70,57 +69,55 @@ def _valid_id(value):
     return type(value) is int and 0 < value <= 2 ** 63 - 1
 
 
-def _validate_hosts(user, host_ids):
-    if type(host_ids) is not list or not host_ids or not all(_valid_id(item) for item in host_ids):
-        raise ValueError('请授权有效的服务器整数 ID')
-    ids = set(host_ids)
-    existing = set(Host.objects.filter(id__in=ids).values_list('id', flat=True))
-    permitted = existing if user.is_supper else existing.intersection(get_host_perms(user))
-    if permitted != ids:
-        raise AuthorizationError('只能授权当前用户有权访问的已登记主机')
-    return ids
+def _validate_days(days):
+    if type(days) is not int or days not in TOKEN_DAYS:
+        raise ValueError('令牌有效期只能是 1、7、30 天、6 个月（180 天）或 1 年（365 天）')
+
+
+def _new_secret():
+    plaintext = f'moon_{secrets.token_urlsafe(32)}'
+    return plaintext, plaintext[:12], _digest(plaintext)
 
 
 @transaction.atomic
-def create_token(user, name, days, host_ids):
-    if type(days) is not int or days not in TOKEN_DAYS:
-        raise ValueError('令牌有效期只能是 1、7 或 30 天')
+def create_token(user, name, days):
+    """Create a token that may operate every registered host while its owner keeps MCP use permission."""
+    _validate_days(days)
     if not isinstance(name, str) or not name.strip() or len(name.strip()) > 100:
         raise ValueError('令牌名称须为 1 到 100 个字符')
     if not user.is_active or user.is_deleted or user.type != 'default':
         raise AuthorizationError('用户已禁用')
-    ids = _validate_hosts(user, host_ids)
-    plaintext = f'moon_{secrets.token_urlsafe(32)}'
+    plaintext, prefix, digest = _new_secret()
     token = McpToken.objects.create(
-        name=name.strip(), token_prefix=plaintext[:12], token_digest=_digest(plaintext),
+        name=name.strip(), token_prefix=prefix, token_digest=digest,
         user=user, created_by=user, expires_at=timezone.now() + timedelta(days=days))
     # Anchor expiration to the stored creation timestamp, never to last use.
     token.expires_at = token.created_at + timedelta(days=days)
     token.save(update_fields=['expires_at'])
-    token.hosts.set(ids)
     return token, plaintext
 
 
 @transaction.atomic
 def regenerate_token(token, actor, days):
+    """Refresh a token in place: the old secret stops working immediately, the record and audit links stay."""
+    _validate_days(days)
     current = McpToken.objects.select_for_update().select_related('user').get(pk=token.pk)
     if not actor.is_supper and current.user_id != actor.id:
         raise AuthorizationError('无权管理其他用户的令牌')
     if current.revoked_at:
-        raise ValueError('已撤销令牌不能重新生成')
-    owner = current.user
-    replacement, plaintext = create_token(owner, current.name, days,
-                                          list(current.hosts.values_list('id', flat=True)))
-    replacement.created_by = actor
-    replacement.save(update_fields=['created_by'])
-    current.revoked_at = timezone.now()
-    current.replaced_by = replacement
-    current.save(update_fields=['revoked_at', 'replaced_by'])
-    return replacement, plaintext
+        raise ValueError('已撤销的历史令牌不能刷新，请删除后重新创建')
+    plaintext, prefix, digest = _new_secret()
+    current.token_prefix, current.token_digest = prefix, digest
+    current.expires_at = timezone.now() + timedelta(days=days)
+    current.last_used_at = None
+    current.save(update_fields=['token_prefix', 'token_digest', 'expires_at', 'last_used_at'])
+    return current, plaintext
 
 
-def revoke_token(token):
-    McpToken.objects.filter(pk=token.pk, revoked_at__isnull=True).update(revoked_at=timezone.now())
+def delete_token(token, actor):
+    if not actor.is_supper and token.user_id != actor.id:
+        raise AuthorizationError('无权管理其他用户的令牌')
+    McpToken.objects.filter(pk=token.pk).delete()
 
 
 def audit_auth_rejection(plaintext, ip, reason):
@@ -157,9 +154,8 @@ def authenticate_token(plaintext, ip='', audit=True):
 def authorized_host_queryset(token):
     token = McpToken.objects.select_related('user').get(pk=token.pk)
     _assert_usable(token)
-    token_ids = set(token.hosts.values_list('id', flat=True))
-    current_ids = token_ids if token.user.is_supper else token_ids.intersection(get_host_perms(token.user))
-    return Host.objects.filter(id__in=current_ids).order_by('id')
+    # Tokens are no longer scoped: every registered host is reachable, including hosts added later.
+    return Host.objects.all().order_by('id')
 
 
 def list_authorized_hosts(token, ip=None):
@@ -176,7 +172,7 @@ def _get_authorized_host(token, host_id):
         raise AuthorizationError('服务器 ID 必须是正整数')
     host = authorized_host_queryset(token).filter(pk=host_id).first()
     if not host:
-        raise AuthorizationError('主机未登记、未授权或用户权限已撤销')
+        raise AuthorizationError('主机未登记')
     return host
 
 

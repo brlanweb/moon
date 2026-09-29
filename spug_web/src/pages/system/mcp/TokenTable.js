@@ -1,7 +1,7 @@
 import React, {useState} from 'react';
 import {observer} from 'mobx-react';
 import {Form, Modal, Radio, Tag, message} from 'antd';
-import {KeyOutlined, ReloadOutlined, StopOutlined} from '@ant-design/icons';
+import {DeleteOutlined, KeyOutlined, ReloadOutlined} from '@ant-design/icons';
 import {Action, AuthButton, TableCard} from 'components';
 import http from 'libs/http';
 import store from './store';
@@ -14,10 +14,10 @@ export default observer(function TokenTable() {
   const [regenerateTarget, setRegenerateTarget] = useState();
   const [days, setDays] = useState(7);
   const [regenerating, setRegenerating] = useState(false);
-  const revoke = item => Modal.confirm({
-    title: '撤销令牌', content: `撤销后立即失效，确定撤销 ${item.name}？`,
+  const remove = item => Modal.confirm({
+    title: '删除令牌', content: `删除后立即失效且无法恢复，确定删除 ${item.name}？`,
     onOk: () => http.delete('/api/mcp-admin/tokens/', {params: {id: item.id}})
-      .then(() => { message.success('令牌已撤销'); return store.fetchTokens(); })
+      .then(() => { message.success('令牌已删除'); return store.fetchTokens(); })
   });
   const regenerate = async () => {
     if (regenerating) return;
@@ -27,7 +27,7 @@ export default observer(function TokenTable() {
         id: regenerateTarget.id, days
       });
       setRegenerateTarget(undefined);
-      showPlaintext(data.token, '新令牌');
+      showPlaintext(data.token, '令牌已刷新');
       await store.fetchTokens();
     } catch (_) {
       // The shared HTTP client displays request errors.
@@ -40,9 +40,9 @@ export default observer(function TokenTable() {
     {title: '到期时间', dataIndex: 'expires_at'},
     {title: '操作', render: (_, item) => <Action>
       <Action.Button auth="system.mcp.edit" onClick={() => { setDays(7); setRegenerateTarget(item); }}
-                     disabled={item.status === 'revoked'} icon={<ReloadOutlined/>}>重新生成</Action.Button>
-      <Action.Button auth="system.mcp.del" danger onClick={() => revoke(item)}
-                     disabled={item.status !== 'active'} icon={<StopOutlined/>}>撤销</Action.Button>
+                     disabled={item.status === 'revoked'} icon={<ReloadOutlined/>}>刷新</Action.Button>
+      <Action.Button auth="system.mcp.del" danger onClick={() => remove(item)}
+                     icon={<DeleteOutlined/>}>删除</Action.Button>
     </Action>},
   ];
   return <>
@@ -50,13 +50,13 @@ export default observer(function TokenTable() {
                dataSource={store.tokens} columns={columns} onReload={store.fetchTokens} scroll={{x: 980}}
                actions={[<AuthButton key="create" auth="system.mcp.add" type="primary" icon={<KeyOutlined/>}
                                     onClick={() => store.createVisible = true}>创建令牌</AuthButton>]}/>
-    <Modal open={Boolean(regenerateTarget)} title="重新生成令牌" okText="重新生成" confirmLoading={regenerating}
+    <Modal open={Boolean(regenerateTarget)} title="刷新令牌" okText="刷新" confirmLoading={regenerating}
            cancelButtonProps={{disabled: regenerating}} maskClosable={!regenerating}
            onCancel={() => { if (!regenerating) setRegenerateTarget(undefined); }} onOk={regenerate}>
-      <p>旧令牌会立即撤销，新令牌仅展示一次。</p>
+      <p>刷新后旧密钥立即失效，新密钥仅展示一次，令牌 ID 与审计记录保持不变。</p>
       <Form.Item label="绝对有效期">
         <Radio.Group value={days} onChange={event => setDays(event.target.value)}>
-          <Radio.Button value={1}>1 天</Radio.Button><Radio.Button value={7}>7 天</Radio.Button><Radio.Button value={30}>30 天</Radio.Button>
+          <Radio.Button value={1}>1 天</Radio.Button><Radio.Button value={7}>7 天</Radio.Button><Radio.Button value={30}>30 天</Radio.Button><Radio.Button value={180}>6 个月</Radio.Button><Radio.Button value={365}>1 年</Radio.Button>
         </Radio.Group>
       </Form.Item>
     </Modal>
