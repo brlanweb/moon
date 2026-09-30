@@ -4,7 +4,8 @@
  * Released under the AGPL-3.0 License.
  */
 import React, { useEffect, useState } from 'react';
-import { Modal, Form, Radio, Input, message } from 'antd';
+import { Modal, Form, Radio, Input, Alert, message } from 'antd';
+import { buildRepoUrl, parseRepoUrl } from './repoAuth';
 import { http, t } from 'libs';
 
 function Repo(props) {
@@ -14,42 +15,16 @@ function Repo(props) {
   useEffect(() => {
     http.post('/api/app/kit/key/', {key: 'public_key'})
       .then(res => setKey(res))
-    if (props.url) {
-      const fields = props.url.match(/^(https?:\/\/)(.+):(.+)@(.*)$/)
-      if (fields && fields.length === 5) {
-        form.setFieldsValue({
-          type: 'password',
-          url: fields[1] + fields[4],
-          username: decodeURIComponent(fields[2]),
-          password: decodeURIComponent(fields[3])
-        })
-      } else if (props.url.startsWith('git@')) {
-        form.setFieldsValue({type: 'key', url: props.url})
-      } else {
-        form.setFieldsValue({url: props.url})
-      }
-    }
+    form.setFieldsValue(parseRepoUrl(props.url))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   function handleSubmit() {
-    const formData = form.getFieldsValue()
-    if (!formData.url) return message.error(t('请输入仓库地址'))
-    let url = formData.url;
-    if (formData.type === 'password') {
-      if (!formData.username) return message.error(t('请输入账户'))
-      if (!formData.password) return message.error(t('请输入密码'))
-      if (formData.url.startsWith('http')) {
-        const username = encodeURIComponent(formData.username)
-        const password = encodeURIComponent(formData.password)
-        url = formData.url.replace(/^(https?:\/\/)/, `$1${username}:${password}@`)
-      } else {
-        return message.error(t('认证类型为账户密码，仓库地址需以http或https开头。'))
-      }
-    } else if (formData.url.startsWith('http')) {
-      return message.error(t('输入的仓库地址以http或https开头，则认证类型需为账户密码认证。'))
+    try {
+      props.onOk(buildRepoUrl(form.getFieldsValue()))
+    } catch (error) {
+      return message.error(t(error.message))
     }
-    props.onOk(url)
     props.onCancel()
   }
 
@@ -71,8 +46,9 @@ function Repo(props) {
       onCancel={props.onCancel}
       onOk={handleSubmit}>
       <Form form={form} labelCol={{span: 6}} wrapperCol={{span: 16}}>
-        <Form.Item label={t('认证类型')} name="type" initialValue="password">
+        <Form.Item label={t('认证类型')} name="type" initialValue="token">
           <Radio.Group>
+            <Radio.Button value="token">GitHub Token</Radio.Button>
             <Radio.Button value="password">{t('账户密码')}</Radio.Button>
             <Radio.Button value="key">{t('密钥')}</Radio.Button>
           </Radio.Group>
@@ -83,18 +59,26 @@ function Repo(props) {
 
         <Form.Item noStyle shouldUpdate>
           {({getFieldValue}) =>
-            getFieldValue('type') === 'password' ? (
+            getFieldValue('type') === 'token' ? (
+              <React.Fragment>
+                <Alert type="info" showIcon message={t('GitHub不支持Git账户密码认证，请使用PAT访问令牌。细粒度令牌需选择目标仓库并授予Contents只读权限；组织仓库可能需要审批或SSO授权。')} style={{marginBottom: 16}}/>
+                <Form.Item required label="Token (PAT)" name="token">
+                  <Input.Password autoComplete="new-password" placeholder="github_pat_… / ghp_…"/>
+                </Form.Item>
+              </React.Fragment>
+            ) : getFieldValue('type') === 'password' ? (
               <React.Fragment>
                 <Form.Item required label={t('账户')} name="username">
                   <Input placeholder={t('请输入')}/>
                 </Form.Item>
-                <Form.Item required label={t('密码')} name="password">
-                  <Input placeholder={t('请输入')}/>
+                <Form.Item required label={t('密码')} name="password" extra={t('GitHub请在此填写PAT而非登录密码，或切换到GitHub Token。')}>
+                  <Input.Password autoComplete="new-password" placeholder={t('请输入')}/>
                 </Form.Item>
               </React.Fragment>
             ) : (
               <Form.Item label={t('密钥')} extra={(
                 <span>
+                  {t('将Moon公钥添加到GitHub仓库Settings → Deploy keys（只读），仓库地址使用git@github.com:组织/仓库.git。不要在这里粘贴私钥。')}<br/>
                   {t('请复制该密钥，以Gitee为例可参考')}
                   <a target="_blank" rel="noopener noreferrer" href="https://gitee.com/help/articles/4191">{t('Gitee文档')}</a>
                   {t('进行后续配置。')}

@@ -131,6 +131,14 @@ const dict = {
   '请输入备注信息': 'Enter a description',
 
   // Repo.js
+  "GitHub不支持Git账户密码认证，请使用PAT访问令牌。细粒度令牌需选择目标仓库并授予Contents只读权限；组织仓库可能需要审批或SSO授权。": "GitHub Git operations require a PAT, not your login password. For fine-grained tokens, select the repository and grant Contents: Read-only. Organization approval or SSO authorization may be required.",
+  "GitHub请在此填写PAT而非登录密码，或切换到GitHub Token。": "For GitHub, enter a PAT instead of your login password, or select GitHub Token.",
+  "将Moon公钥添加到GitHub仓库Settings → Deploy keys（只读），仓库地址使用git@github.com:组织/仓库.git。不要在这里粘贴私钥。": "Add the Moon public key to GitHub repository Settings → Deploy keys (read-only), and use git@github.com:owner/repo.git. Do not paste a private key here.",
+  "SSH认证请使用git@或ssh://仓库地址": "SSH authentication requires a git@ or ssh:// repository URL.",
+  "请输入有效的HTTP或HTTPS仓库地址": "Enter a valid HTTP or HTTPS repository URL.",
+  "Token认证必须使用HTTPS仓库地址": "Token authentication requires an HTTPS repository URL.",
+  "请输入访问令牌": "Enter an access token.",
+  "请填写PAT访问令牌，不是SSH公钥或私钥": "Enter a PAT access token, not an SSH public or private key.",
   '请输入仓库地址': 'Please enter the repository URL',
   '请输入账户': 'Please enter the username',
   '请输入密码': 'Please enter the password',
