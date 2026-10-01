@@ -19,6 +19,7 @@ from apps.mcp_ops.service import (
     execute_script,
     list_authorized_hosts,
     regenerate_token,
+    update_token,
 )
 from mcp import Client
 
@@ -198,6 +199,87 @@ class McpOperationTests(TestCase):
         request = factory.get('/mcp-admin/logs/?page_size=101')
         request.user = other
         self.assertIn('权限拒绝', AuditView.as_view()(request).content.decode())
+
+
+class McpTokenLevelTests(TestCase):
+    def setUp(self):
+        self.admin = User.objects.create(
+            username='root-admin', nickname='Admin', password_hash='x', type='default',
+            is_active=True, is_deleted=False, is_supper=True, access_token='a' * 32,
+            token_expired=9999999999, last_login='', last_ip='')
+        self.user = User.objects.create(
+            username='plain', nickname='Plain', password_hash='x', type='default',
+            is_active=True, is_deleted=False, access_token='p' * 32,
+            token_expired=9999999999, last_login='', last_ip='')
+        role = Role.objects.create(name='mcp', page_perms={
+            'system': {'mcp': ['view', 'add', 'edit', 'del', 'use']}}, group_perms=[])
+        self.user.roles.add(role)
+        self.host = Host.objects.create(
+            name='h', hostname='192.0.2.20', port=22, username='root',
+            is_verified=True, created_by=self.admin)
+
+    def test_default_level_is_normal(self):
+        token, _ = create_token(self.user, 'n', 1)
+        self.assertEqual(token.level, 'normal')
+        self.assertEqual(token.to_view()['level'], 'normal')
+
+    @patch('apps.mcp_ops.service._run_ssh', return_value=(0, 'ok'))
+    def test_super_key_skips_risk_check_but_normal_key_is_blocked(self, run_ssh):
+        normal, _ = create_token(self.admin, 'n', 1)
+        with self.assertRaises(AuthorizationError):
+            execute_script(normal, self.host.id, 'rm -rf /', '127.0.0.1')
+        run_ssh.assert_not_called()
+        sup, _ = create_token(self.admin, 's', 1, 'super')
+        self.assertEqual(execute_script(sup, self.host.id, 'rm -rf /tmp/x', '127.0.0.1')['exit_code'], 0)
+        run_ssh.assert_called_once()
+
+    @patch('apps.mcp_ops.service._run_ssh', return_value=(0, 'ok'))
+    def test_super_key_loses_privilege_when_owner_is_demoted(self, run_ssh):
+        sup, _ = create_token(self.admin, 's', 1, 'super')
+        self.admin.is_supper = False
+        self.admin.save(update_fields=['is_supper'])
+        sup.user.refresh_from_db()
+        with self.assertRaises(AuthorizationError):
+            execute_script(sup, self.host.id, 'rm -rf /', '127.0.0.1')
+
+    def test_non_super_admin_cannot_grant_super_level(self):
+        with self.assertRaisesRegex(AuthorizationError, '超级管理员'):
+            create_token(self.user, 's', 1, 'super')
+        token, _ = create_token(self.user, 'n', 1)
+        with self.assertRaisesRegex(AuthorizationError, '超级管理员'):
+            update_token(token, self.user, 'n', 'super')
+        with self.assertRaises(ValueError):
+            create_token(self.admin, 'x', 1, 'root')
+
+    def test_super_admin_can_edit_level_in_place(self):
+        token, plaintext = create_token(self.user, 'n', 1)
+        updated = update_token(token, self.admin, 'renamed', 'super')
+        self.assertEqual((updated.id, updated.name, updated.level), (token.id, 'renamed', 'super'))
+        self.assertEqual(authenticate_token(plaintext, '127.0.0.1').id, token.id)
+
+    def test_patch_api_respects_ownership_and_level(self):
+        from apps.mcp_ops.views import TokenView
+        factory = RequestFactory()
+        mine, _ = create_token(self.admin, 'admin-owned', 1)
+
+        def patch_as(user, body):
+            request = factory.patch('/mcp-admin/tokens/', data=json.dumps(body), content_type='application/json')
+            request.user = user
+            return TokenView.as_view()(request).content.decode()
+
+        self.assertIn('令牌不存在', patch_as(self.user, {'id': mine.id, 'name': 'x', 'level': 'normal'}))
+        own, _ = create_token(self.user, 'own', 1)
+        self.assertIn('超级管理员', patch_as(self.user, {'id': own.id, 'name': 'x', 'level': 'super'}))
+        self.assertIn('"level": "super"', patch_as(self.admin, {'id': own.id, 'name': 'x', 'level': 'super'}))
+
+    def test_super_key_bypasses_file_whitelist_only(self):
+        from apps.mcp_ops.files import normalize_path
+        with self.assertRaises(AuthorizationError):
+            normalize_path('/etc/nginx/nginx.conf')
+        self.assertEqual(normalize_path('/etc/nginx/nginx.conf', True), '/etc/nginx/nginx.conf')
+        for bad in ('etc/passwd', '/tmp/../etc/passwd', '/etc/'):
+            with self.subTest(bad=bad), self.assertRaises(AuthorizationError):
+                normalize_path(bad, True)
 
 
 class OfficialSdkRegistrationTests(TestCase):

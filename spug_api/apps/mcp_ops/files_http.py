@@ -47,7 +47,7 @@ async def upload(request):
     started = time.monotonic()
     writer = None
     try:
-        writer = await to_thread.run_sync(files.Upload, host, path)
+        writer = await to_thread.run_sync(files.Upload, host, path, files.is_unrestricted(token))
         buffer = bytearray()
         async for chunk in request.stream():
             if not chunk:
@@ -94,7 +94,7 @@ async def download(request):
     token, host, path = claimed
     started = time.monotonic()
     try:
-        reader = await to_thread.run_sync(files.Download, host, path)
+        reader = await to_thread.run_sync(files.Download, host, path, files.is_unrestricted(token))
     except Exception as exc:
         reason = _redact(str(exc)) or '下载失败'
         await sync_to_async(files.finish_audit, thread_sensitive=True)(

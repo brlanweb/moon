@@ -7,7 +7,12 @@ from libs import ModelMixin
 
 
 class McpToken(models.Model, ModelMixin):
+    LEVEL_NORMAL, LEVEL_SUPER = 'normal', 'super'
+    LEVELS = ((LEVEL_NORMAL, '普通'), (LEVEL_SUPER, '超管'))
+
     name = models.CharField(max_length=100)
+    # super: no script risk check and no file path whitelist; normal: all existing restrictions apply.
+    level = models.CharField(max_length=10, choices=LEVELS, default=LEVEL_NORMAL)
     token_prefix = models.CharField(max_length=20)
     token_digest = models.CharField(max_length=64, unique=True)
     user = models.ForeignKey(User, models.PROTECT, related_name='mcp_tokens')
@@ -29,7 +34,7 @@ class McpToken(models.Model, ModelMixin):
 
     def to_view(self):
         return {
-            'id': self.id, 'name': self.name, 'token_prefix': self.token_prefix,
+            'id': self.id, 'name': self.name, 'level': self.level, 'token_prefix': self.token_prefix,
             'user_id': self.user_id, 'username': self.user.username,
             'expires_at': self.expires_at.isoformat(),
             'revoked_at': self.revoked_at.isoformat() if self.revoked_at else None,

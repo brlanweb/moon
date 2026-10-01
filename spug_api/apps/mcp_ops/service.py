@@ -79,17 +79,36 @@ def _new_secret():
     return plaintext, plaintext[:12], _digest(plaintext)
 
 
-@transaction.atomic
-def create_token(user, name, days):
-    """Create a token that may operate every registered host while its owner keeps MCP use permission."""
-    _validate_days(days)
+def _validate_name(name):
     if not isinstance(name, str) or not name.strip() or len(name.strip()) > 100:
         raise ValueError('令牌名称须为 1 到 100 个字符')
+    return name.strip()
+
+
+def _validate_level(level, actor):
+    if level not in (McpToken.LEVEL_NORMAL, McpToken.LEVEL_SUPER):
+        raise ValueError('令牌级别只能是 normal（普通）或 super（超管）')
+    if level == McpToken.LEVEL_SUPER and not actor.is_supper:
+        raise AuthorizationError('只有超级管理员可以授予超管 Key')
+    return level
+
+
+def is_unrestricted(token):
+    """A super key skips script risk checks and file path whitelists, but only while its owner is still a super admin."""
+    return token.level == McpToken.LEVEL_SUPER and bool(token.user.is_supper)
+
+
+@transaction.atomic
+def create_token(user, name, days, level=McpToken.LEVEL_NORMAL):
+    """Create a token that may operate every registered host while its owner keeps MCP use permission."""
+    _validate_days(days)
+    name = _validate_name(name)
+    level = _validate_level(level, user)
     if not user.is_active or user.is_deleted or user.type != 'default':
         raise AuthorizationError('用户已禁用')
     plaintext, prefix, digest = _new_secret()
     token = McpToken.objects.create(
-        name=name.strip(), token_prefix=prefix, token_digest=digest,
+        name=name, level=level, token_prefix=prefix, token_digest=digest,
         user=user, created_by=user, expires_at=timezone.now() + timedelta(days=days))
     # Anchor expiration to the stored creation timestamp, never to last use.
     token.expires_at = token.created_at + timedelta(days=days)
@@ -112,6 +131,18 @@ def regenerate_token(token, actor, days):
     current.last_used_at = None
     current.save(update_fields=['token_prefix', 'token_digest', 'expires_at', 'last_used_at'])
     return current, plaintext
+
+
+@transaction.atomic
+def update_token(token, actor, name, level):
+    """Edit name and level in place; the secret, expiry and audit links stay unchanged."""
+    current = McpToken.objects.select_for_update().select_related('user').get(pk=token.pk)
+    if not actor.is_supper and current.user_id != actor.id:
+        raise AuthorizationError('无权管理其他用户的令牌')
+    current.name = _validate_name(name)
+    current.level = _validate_level(level, actor)
+    current.save(update_fields=['name', 'level'])
+    return current
 
 
 def delete_token(token, actor):
@@ -276,7 +307,7 @@ def execute_script(token, host_id, script, ip='', timeout=60, sensitive_values=(
         if type(timeout) is not int or not 1 <= timeout <= MAX_TIMEOUT:
             raise AuthorizationError('超时范围必须是 1 到 300 秒')
         host = _get_authorized_host(token, host_id)
-        risk = _script_risk(script)
+        risk = None if is_unrestricted(token) else _script_risk(script)
         if risk:
             raise AuthorizationError(risk)
         if not _SEMAPHORE.acquire(blocking=False):

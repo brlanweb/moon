@@ -86,7 +86,7 @@ async def check_connection(host_id: StrictInt, context: Context) -> dict:
         token, host_id, _request_ip(context), (_TOKEN_VALUE.get(),))
 
 
-@server.tool(description='在一台已登记服务器执行受限脚本；高危脚本拒绝，超时最多 300 秒，输出最多 64 KiB。')
+@server.tool(description='在一台已登记服务器执行脚本；普通 Key 拒绝高危脚本，超管 Key 不做命令限制；超时最多 300 秒，输出最多 64 KiB。')
 async def execute_script(host_id: StrictInt, script: StrictStr, context: Context, timeout: StrictInt = 60) -> dict:
     token = await _current_token(context)
     return await sync_to_async(execute_host_script, thread_sensitive=True)(
@@ -95,7 +95,7 @@ async def execute_script(host_id: StrictInt, script: StrictStr, context: Context
 
 @server.tool(description=(
     '为已登记服务器上的文件创建一次性上传链接（30 分钟有效、仅可使用一次、单文件最大 1 GiB）。'
-    'remote_path 必须是允许目录内的绝对文件路径，上级目录必须已存在，同名文件会被原子覆盖。'
+    'remote_path 必须是绝对文件路径（普通 Key 限定允许目录，超管 Key 不限目录），上级目录必须已存在，同名文件会被原子覆盖。'
     '拿到 url 后在本地执行：curl -fsS -T <本地文件> "<url>"，响应返回大小和 sha256。'))
 async def create_upload_link(host_id: StrictInt, remote_path: StrictStr, context: Context) -> dict:
     token = await _current_token(context)
@@ -105,7 +105,7 @@ async def create_upload_link(host_id: StrictInt, remote_path: StrictStr, context
 
 @server.tool(description=(
     '为已登记服务器上的文件创建一次性下载链接（30 分钟有效、仅可使用一次、单文件最大 1 GiB）。'
-    'remote_path 必须是允许目录内的普通文件。拿到 url 后在本地执行：curl -fsS -o <本地文件> "<url>"。'))
+    'remote_path 必须是普通文件（普通 Key 限定允许目录，超管 Key 不限目录）。拿到 url 后在本地执行：curl -fsS -o <本地文件> "<url>"。'))
 async def create_download_link(host_id: StrictInt, remote_path: StrictStr, context: Context) -> dict:
     token = await _current_token(context)
     return await sync_to_async(create_file_link, thread_sensitive=True)(

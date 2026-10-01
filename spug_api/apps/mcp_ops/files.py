@@ -21,6 +21,7 @@ from django.utils import timezone
 from apps.mcp_ops.models import McpToken
 from apps.mcp_ops.service import (
     AuthorizationError, OperationError, _assert_usable, _audit, _get_authorized_host, _redact,
+    is_unrestricted,
 )
 
 LINK_TTL = 30 * 60
@@ -61,8 +62,8 @@ def _within(path, root):
     return path.startswith(root.rstrip('/') + '/')
 
 
-def normalize_path(path):
-    """Lexically validate a remote file path and return its normalized form."""
+def normalize_path(path, unrestricted=False):
+    """Lexically validate a remote file path; super keys skip only the directory whitelist."""
     if not isinstance(path, str) or not path.strip():
         raise AuthorizationError('远程路径不能为空')
     if len(path) > MAX_PATH_LENGTH or any(ch in path for ch in '\x00\r\n'):
@@ -74,6 +75,8 @@ def normalize_path(path):
     if path.endswith('/'):
         raise AuthorizationError('远程路径必须指向文件而不是目录')
     normalized = '/' + posixpath.normpath(path).lstrip('/')
+    if unrestricted:
+        return normalized
     roots = allowed_dirs()
     if not any(_within(normalized, root) for root in roots):
         raise AuthorizationError(f'远程路径不在允许的目录内，允许目录：{", ".join(roots) or "无"}')
@@ -94,12 +97,13 @@ def create_link(token, host_id, remote_path, mode, ip='', sensitive_values=()):
     host = None
     try:
         host = _get_authorized_host(token, host_id)
-        path = normalize_path(remote_path)
+        unrestricted = is_unrestricted(token)
+        path = normalize_path(remote_path, unrestricted)
         with _connect(host) as sftp:
             if mode == UPLOAD:
-                _inspect_upload(sftp, path)
+                _inspect_upload(sftp, path, unrestricted)
             else:
-                _inspect_download(sftp, path)
+                _inspect_download(sftp, path, unrestricted)
         secret = f'mft_{secrets.token_urlsafe(32)}'
         expires_at = timezone.now() + timedelta(seconds=LINK_TTL)
         cache.set(_link_key(secret), {
@@ -202,12 +206,14 @@ def _real_roots(sftp):
     return roots
 
 
-def _check_real(sftp, real_path):
+def _check_real(sftp, real_path, unrestricted=False):
+    if unrestricted:
+        return
     if not any(_within(real_path, root) for root in _real_roots(sftp)):
         raise AuthorizationError('远程真实路径（解析符号链接后）不在允许的目录内')
 
 
-def _inspect_upload(sftp, path):
+def _inspect_upload(sftp, path, unrestricted=False):
     """Return the real target path for an upload after validating its parent directory."""
     parent, name = posixpath.split(path)
     try:
@@ -218,7 +224,7 @@ def _inspect_upload(sftp, path):
     if not stat.S_ISDIR(parent_attr.st_mode):
         raise OperationError(f'目标上级路径不是目录：{parent}')
     target = posixpath.join(real_parent, name)
-    _check_real(sftp, target)
+    _check_real(sftp, target, unrestricted)
     try:
         attr = sftp.lstat(target)
     except IOError:
@@ -230,14 +236,14 @@ def _inspect_upload(sftp, path):
     return target
 
 
-def _inspect_download(sftp, path):
+def _inspect_download(sftp, path, unrestricted=False):
     """Return (real_path, size) for a downloadable regular file."""
     try:
         real = sftp.normalize(path)
         attr = sftp.stat(real)
     except IOError:
         raise OperationError(f'远程文件不存在：{path}') from None
-    _check_real(sftp, real)
+    _check_real(sftp, real, unrestricted)
     if not stat.S_ISREG(attr.st_mode):
         raise OperationError('远程路径不是普通文件')
     if attr.st_size > MAX_FILE_BYTES:
@@ -248,12 +254,12 @@ def _inspect_download(sftp, path):
 class Upload:
     """Streams into a hidden temp file and atomically renames it over the target on commit."""
 
-    def __init__(self, host, path):
+    def __init__(self, host, path, unrestricted=False):
         self._conn = _connect(host)
         self._sftp = self._conn.__enter__()
         self._file = None
         try:
-            self.target = _inspect_upload(self._sftp, path)
+            self.target = _inspect_upload(self._sftp, path, unrestricted)
             parent, name = posixpath.split(self.target)
             self.temp = posixpath.join(parent, f'.{name}.moon-{secrets.token_hex(6)}.part')
             self._file = self._sftp.open(self.temp, 'wb')
@@ -306,12 +312,12 @@ class Upload:
 
 
 class Download:
-    def __init__(self, host, path):
+    def __init__(self, host, path, unrestricted=False):
         self._conn = _connect(host)
         self._sftp = self._conn.__enter__()
         self._file = None
         try:
-            self.real, self.size = _inspect_download(self._sftp, path)
+            self.real, self.size = _inspect_download(self._sftp, path, unrestricted)
             self.name = posixpath.basename(self.real)
             self._file = self._sftp.open(self.real, 'rb')
         except Exception:

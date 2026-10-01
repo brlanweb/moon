@@ -3,14 +3,19 @@ from django.views.generic import View
 
 from apps.account.utils import get_host_perms
 from apps.mcp_ops.models import McpAuditLog, McpToken
-from apps.mcp_ops.service import TOKEN_DAYS, create_token, delete_token, regenerate_token
+from apps.mcp_ops.service import TOKEN_DAYS, create_token, delete_token, regenerate_token, update_token
 from libs import Argument, JsonParser, auth, json_response
 
 _DAYS_HELP = '有效期只能是 1、7、30 天、6 个月或 1 年'
+_LEVEL_HELP = '令牌级别只能是 normal（普通）或 super（超管）'
 
 
 def _valid_days(value):
     return type(value) is int and value in TOKEN_DAYS
+
+
+def _valid_level(value):
+    return value in (McpToken.LEVEL_NORMAL, McpToken.LEVEL_SUPER)
 
 
 def _token_query(user):
@@ -28,14 +33,32 @@ class TokenView(View):
         form, error = JsonParser(
             Argument('name', help='请输入令牌名称'),
             Argument('days', filter=_valid_days, help=_DAYS_HELP),
+            Argument('level', default=McpToken.LEVEL_NORMAL, filter=_valid_level, help=_LEVEL_HELP),
         ).parse(request.body)
         if error:
             return json_response(error=error)
         try:
-            token, plaintext = create_token(request.user, form.name, form.days)
+            token, plaintext = create_token(request.user, form.name, form.days, form.level)
             data = token.to_view()
             data['token'] = plaintext
             return json_response(data)
+        except Exception as exc:
+            return json_response(error=str(exc))
+
+    @auth('system.mcp.edit')
+    def patch(self, request):
+        form, error = JsonParser(
+            Argument('id', type=int),
+            Argument('name', help='请输入令牌名称'),
+            Argument('level', filter=_valid_level, help=_LEVEL_HELP),
+        ).parse(request.body)
+        if error:
+            return json_response(error=error)
+        token = _token_query(request.user).filter(pk=form.id).first()
+        if not token:
+            return json_response(error='令牌不存在')
+        try:
+            return json_response(update_token(token, request.user, form.name, form.level).to_view())
         except Exception as exc:
             return json_response(error=str(exc))
 
