@@ -1,0 +1,29 @@
+import React from 'react';
+import { Row, Col } from 'antd';
+import { Breadcrumb } from 'components';
+import { t } from 'libs';
+import NoticeIndex from './Notice';
+import TodoIndex from './Todo';
+import NavIndex from './Nav';
+
+function HomeIndex() {
+  return (
+    <div>
+      <Breadcrumb>
+        <Breadcrumb.Item>{t('首页')}</Breadcrumb.Item>
+        <Breadcrumb.Item>{t('工作台')}</Breadcrumb.Item>
+      </Breadcrumb>
+      <Row gutter={[12, 12]}>
+        <Col xs={24} lg={16}>
+          <TodoIndex/>
+        </Col>
+        <Col xs={24} lg={8}>
+          <NoticeIndex/>
+        </Col>
+      </Row>
+      <NavIndex/>
+    </div>
+  )
+}
+
+export default HomeIndex

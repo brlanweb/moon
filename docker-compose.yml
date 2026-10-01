@@ -1,25 +1,25 @@
 services:
-  spug:
-    image: spug-service-4.0:latest
+  moon:
+    image: moon-service-4.0:latest
 
     build:
       context: .
       dockerfile: Dockerfile.local
       labels:
-        io.spug.app: spug-ai
+        io.moon.app: moon-ai
 
-    container_name: spug
+    container_name: moon
     restart: always
     privileged: true
     # Linux 生产环境共享宿主机网络，使 127.0.0.1 可访问宿主机 SSH。
     network_mode: host
 
     volumes:
-      - /opt/spug/releases/latest:/data/spug
-      - /opt/spug/repos:/data/repos
+      - /opt/moon/releases/latest:/data/moon
+      - /opt/moon/repos:/data/repos
       - /var/run/docker.sock:/var/run/docker.sock
       # Host 网络复用宿主机现有 Redis，覆盖 Supervisor 配置以禁用容器内 Redis。
-      - ./docs/docker/supervisor-host.conf:/etc/supervisor/conf.d/spug.conf:ro
+      - ./docs/docker/supervisor-host.conf:/etc/supervisor/conf.d/moon.conf:ro
       # 覆盖镜像内置配置，为智能体 SSE 关闭缓冲，否则流式回复会被攒到最后一次性下发
       - ./docs/docker/nginx-host.conf:/etc/nginx/nginx.conf:ro
 
@@ -27,14 +27,14 @@ services:
       MOON_MCP_RESOURCE_URL: "${MOON_MCP_RESOURCE_URL:-http://127.0.0.1:8089/mcp}"
       MOON_MCP_ISSUER_URL: "${MOON_MCP_ISSUER_URL:-http://127.0.0.1:8089}"
       MOON_MCP_FILE_DIRS: "${MOON_MCP_FILE_DIRS:-/tmp,/opt,/srv,/data,/home,/root}"
-      SPUG_SECRET_KEY: "${SPUG_SECRET_KEY:?SPUG_SECRET_KEY is required}"
-      SPUG_ALLOWED_HOSTS: "${SPUG_ALLOWED_HOSTS:-127.0.0.1,localhost}"
-      SPUG_DB_ENGINE: "${SPUG_DB_ENGINE:?SPUG_DB_ENGINE is required}"
-      SPUG_DB_NAME: "${SPUG_DB_NAME:?SPUG_DB_NAME is required}"
-      SPUG_DB_USER: "${SPUG_DB_USER:?SPUG_DB_USER is required}"
-      SPUG_DB_PASSWORD: "${SPUG_DB_PASSWORD:?SPUG_DB_PASSWORD is required}"
-      SPUG_DB_HOST: "${SPUG_DB_HOST:?SPUG_DB_HOST is required}"
-      SPUG_DB_PORT: "${SPUG_DB_PORT:?SPUG_DB_PORT is required}"
+      MOON_SECRET_KEY: "${MOON_SECRET_KEY:?MOON_SECRET_KEY is required}"
+      MOON_ALLOWED_HOSTS: "${MOON_ALLOWED_HOSTS:-127.0.0.1,localhost}"
+      MOON_DB_ENGINE: "${MOON_DB_ENGINE:?MOON_DB_ENGINE is required}"
+      MOON_DB_NAME: "${MOON_DB_NAME:?MOON_DB_NAME is required}"
+      MOON_DB_USER: "${MOON_DB_USER:?MOON_DB_USER is required}"
+      MOON_DB_PASSWORD: "${MOON_DB_PASSWORD:?MOON_DB_PASSWORD is required}"
+      MOON_DB_HOST: "${MOON_DB_HOST:?MOON_DB_HOST is required}"
+      MOON_DB_PORT: "${MOON_DB_PORT:?MOON_DB_PORT is required}"
 
     # 保留旧地址兼容性；主机管理连接本机时仍应使用 127.0.0.1。
     extra_hosts:

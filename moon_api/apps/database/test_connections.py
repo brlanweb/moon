@@ -1,0 +1,565 @@
+import json
+from types import SimpleNamespace
+from unittest.mock import ANY, MagicMock, patch
+
+from django.test import RequestFactory, SimpleTestCase
+
+from apps.database.client import (
+    _clickhouse, _mysql, _postgresql, _redis, _redis_execute, execute, test_connection,
+)
+from apps.database.models import DatabaseConnection
+from apps.database.test_policy import FakeConfirmationRedis
+from apps.database.views import (
+    _connection_form, _temporary_connection, check_connection, run_command,
+)
+
+
+class ConnectionSettingsTests(SimpleTestCase):
+    def setUp(self):
+        self.payload = {
+            'name': 'reporting',
+            'type': 'mysql',
+            'host': 'db.internal',
+            'port': 3306,
+        }
+
+    def test_model_uses_connection_governance_defaults(self):
+        connection = DatabaseConnection()
+
+        self.assertEqual(connection.connect_timeout, 10)
+        self.assertEqual(connection.query_timeout, 30)
+        self.assertEqual(connection.idle_timeout, 30)
+        self.assertEqual(connection.environment, 'normal')
+        self.assertIs(connection.read_only, False)
+
+    def test_form_uses_connection_governance_defaults_when_omitted(self):
+        form, error = _connection_form(self.payload)
+
+        self.assertIsNone(error)
+        self.assertEqual(form.connect_timeout, 10)
+        self.assertEqual(form.query_timeout, 30)
+        self.assertEqual(form.idle_timeout, 30)
+        self.assertEqual(form.environment, 'normal')
+        self.assertIs(form.read_only, False)
+
+    def test_form_accepts_timeout_boundaries(self):
+        for connect_timeout, query_timeout in ((1, 1), (120, 3600)):
+            with self.subTest(connect_timeout=connect_timeout, query_timeout=query_timeout):
+                form, error = _connection_form({
+                    **self.payload,
+                    'connect_timeout': connect_timeout,
+                    'query_timeout': query_timeout,
+                })
+
+                self.assertIsNone(error)
+                self.assertEqual(form.connect_timeout, connect_timeout)
+                self.assertEqual(form.query_timeout, query_timeout)
+
+    def test_form_accepts_idle_timeout_boundaries(self):
+        for idle_timeout in (0, 1440):
+            with self.subTest(idle_timeout=idle_timeout):
+                form, error = _connection_form({**self.payload, 'idle_timeout': idle_timeout})
+
+                self.assertIsNone(error)
+                self.assertEqual(form.idle_timeout, idle_timeout)
+
+    def test_form_rejects_idle_timeout_outside_allowed_range(self):
+        for idle_timeout in (-1, 1441):
+            with self.subTest(idle_timeout=idle_timeout):
+                _, error = _connection_form({**self.payload, 'idle_timeout': idle_timeout})
+
+                self.assertEqual(error, '空闲断开必须在 0～1440 分钟之间')
+
+    def test_form_accepts_supported_environments(self):
+        for environment in ('normal', 'production'):
+            with self.subTest(environment=environment):
+                form, error = _connection_form({**self.payload, 'environment': environment})
+
+                self.assertIsNone(error)
+                self.assertEqual(form.environment, environment)
+
+    def test_form_rejects_unsupported_environment(self):
+        _, error = _connection_form({**self.payload, 'environment': 'staging'})
+
+        self.assertEqual(error, '连接环境必须是 normal 或 production')
+
+    def test_form_keeps_read_only_flag(self):
+        form, error = _connection_form({**self.payload, 'read_only': True})
+
+        self.assertIsNone(error)
+        self.assertIs(form.read_only, True)
+
+    def test_form_rejects_non_integer_connection_timeouts(self):
+        for field, message in (
+                ('connect_timeout', '连接超时必须在 1～120 秒之间'),
+                ('query_timeout', '查询超时必须在 1～3600 秒之间')):
+            for value in (True, 17.9):
+                with self.subTest(field=field, value=value):
+                    _, error = _connection_form({**self.payload, field: value})
+
+                    self.assertEqual(error, message)
+
+    def test_form_rejects_connect_timeout_outside_allowed_range(self):
+        for value in (0, 121):
+            with self.subTest(value=value):
+                _, error = _connection_form({**self.payload, 'connect_timeout': value})
+
+                self.assertEqual(error, '连接超时必须在 1～120 秒之间')
+
+    def test_form_rejects_query_timeout_outside_allowed_range(self):
+        for value in (0, 3601):
+            with self.subTest(value=value):
+                _, error = _connection_form({**self.payload, 'query_timeout': value})
+
+                self.assertEqual(error, '查询超时必须在 1～3600 秒之间')
+
+    def test_temporary_connection_keeps_requested_settings(self):
+        form, error = _connection_form({
+            **self.payload,
+            'connect_timeout': 17,
+            'query_timeout': 83,
+            'idle_timeout': 41,
+            'environment': 'production',
+            'read_only': True,
+        })
+
+        self.assertIsNone(error)
+        connection = _temporary_connection(form)
+        self.assertEqual(connection.connect_timeout, 17)
+        self.assertEqual(connection.query_timeout, 83)
+        self.assertEqual(connection.idle_timeout, 41)
+        self.assertEqual(connection.environment, 'production')
+        self.assertIs(connection.read_only, True)
+
+    @patch('apps.database.views.test_connection', return_value=12)
+    @patch('apps.database.views.DatabaseConnection.objects.filter')
+    def test_existing_connection_check_uses_requested_settings(self, connections, _test):
+        item = SimpleNamespace(
+            name='reporting', type='mysql', host='old.internal', port=3306,
+            username='moon', database='operations', use_ssl=False,
+            connect_timeout=10, query_timeout=30, idle_timeout=30,
+            environment='normal', read_only=False,
+        )
+        connections.return_value.first.return_value = item
+        payload = {
+            **self.payload,
+            'id': 7,
+            'connect_timeout': 19,
+            'query_timeout': 91,
+            'idle_timeout': 47,
+            'environment': 'production',
+            'read_only': True,
+        }
+        request = RequestFactory().post(
+            '/api/database/connection/check/',
+            data=json.dumps(payload),
+            content_type='application/json',
+        )
+        request.user = SimpleNamespace(has_perms=lambda _perms: True)
+
+        response = check_connection(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(item.connect_timeout, 19)
+        self.assertEqual(item.query_timeout, 91)
+        self.assertEqual(item.idle_timeout, 47)
+        self.assertEqual(item.environment, 'production')
+        self.assertIs(item.read_only, True)
+
+
+class DriverTimeoutTests(SimpleTestCase):
+    def connection(self, database_type):
+        return SimpleNamespace(
+            type=database_type,
+            host='db.internal',
+            port=5432,
+            username='moon',
+            database='operations',
+            use_ssl=False,
+            read_only=False,
+            connect_timeout=17,
+            query_timeout=83,
+            get_password=lambda: 'secret',
+        )
+
+    @patch('pymysql.connect')
+    def test_mysql_receives_connection_timeouts(self, connect):
+        _mysql(self.connection('mysql'))
+
+        kwargs = connect.call_args.kwargs
+        self.assertEqual(kwargs['database'], 'operations')
+        self.assertEqual(kwargs['connect_timeout'], 17)
+        self.assertEqual(kwargs['read_timeout'], 83)
+        self.assertEqual(kwargs['write_timeout'], 83)
+
+    @patch('pymysql.connect')
+    def test_mysql_and_mariadb_read_only_connections_enforce_session_read_only(self, connect):
+        for database_type in ('mysql', 'mariadb'):
+            with self.subTest(database_type=database_type):
+                connection = self.connection(database_type)
+                connection.read_only = True
+
+                _mysql(connection)
+
+                self.assertEqual(
+                    connect.call_args.kwargs['init_command'],
+                    'SET SESSION TRANSACTION READ ONLY',
+                )
+
+    @patch('pymysql.connect')
+    def test_mysql_receives_request_database_override(self, connect):
+        connection = self.connection('mysql')
+
+        _mysql(connection, database='analytics')
+
+        self.assertEqual(connect.call_args.kwargs['database'], 'analytics')
+        self.assertEqual(connection.database, 'operations')
+
+    @patch('apps.database.client._dbapi_execute', return_value={'rows': []})
+    @patch('apps.database.client._mysql')
+    def test_mysql_execute_without_override_uses_configured_database(self, mysql, dbapi_execute):
+        connection = self.connection('mysql')
+        mysql.return_value = MagicMock()
+
+        execute(connection, 'SELECT * FROM users')
+
+        mysql.assert_called_once_with(connection, database=None)
+        self.assertEqual(connection.database, 'operations')
+
+    @patch('psycopg.connect')
+    def test_postgresql_receives_connection_timeouts(self, connect):
+        _postgresql(self.connection('postgresql'))
+
+        kwargs = connect.call_args.kwargs
+        self.assertEqual(kwargs['connect_timeout'], 17)
+        self.assertEqual(kwargs['options'], '-c statement_timeout=83000')
+
+    @patch('psycopg.connect')
+    def test_postgresql_read_only_connection_enforces_session_read_only(self, connect):
+        connection = self.connection('postgresql')
+        connection.read_only = True
+
+        _postgresql(connection)
+
+        self.assertEqual(
+            connect.call_args.kwargs['options'],
+            '-c statement_timeout=83000 -c default_transaction_read_only=on',
+        )
+
+    @patch('clickhouse_connect.get_client')
+    def test_clickhouse_receives_connection_timeouts(self, get_client):
+        _clickhouse(self.connection('clickhouse'))
+
+        kwargs = get_client.call_args.kwargs
+        self.assertEqual(kwargs['connect_timeout'], 17)
+        self.assertEqual(kwargs['send_receive_timeout'], 83)
+
+    @patch('clickhouse_connect.get_client')
+    def test_clickhouse_read_only_connection_enforces_session_read_only(self, get_client):
+        connection = self.connection('clickhouse')
+        connection.read_only = True
+
+        _clickhouse(connection)
+
+        self.assertEqual(get_client.call_args.kwargs['settings'], {'readonly': 1})
+
+    @patch('redis.Redis')
+    def test_redis_receives_connection_timeouts(self, redis_client):
+        connection = self.connection('redis')
+        connection.database = '2'
+
+        _redis(connection)
+
+        kwargs = redis_client.call_args.kwargs
+        self.assertEqual(kwargs['socket_connect_timeout'], 17)
+        self.assertEqual(kwargs['socket_timeout'], 83)
+
+    @patch('apps.database.client._mysql')
+    def test_connection_closes_driver_connection_after_check(self, connect):
+        client = MagicMock()
+        connect.return_value = client
+
+        test_connection(self.connection('mysql'))
+
+        client.close.assert_called_once_with()
+
+
+class RedisExecutionTests(SimpleTestCase):
+    def test_non_scalar_result_is_json_serialized(self):
+        class RedisResult:
+            def __str__(self):
+                return 'serialized-result'
+
+        client = MagicMock()
+        client.execute_command.return_value = RedisResult()
+
+        result = _redis_execute(client, 'MODULE.RESULT')
+
+        self.assertEqual(result['columns'], ['value'])
+        self.assertEqual(result['rows'], [['"serialized-result"']])
+
+
+class RunCommandPolicyTests(SimpleTestCase):
+    def setUp(self):
+        self.connection = SimpleNamespace(
+            id=23,
+            type='mysql',
+            database='operations',
+            read_only=False,
+            environment='production',
+        )
+        self.user = SimpleNamespace(id=7, has_perms=lambda _perms: True)
+        self.redis = FakeConfirmationRedis()
+        redis_patch = patch(
+            'apps.database.policy.get_redis_connection',
+            return_value=self.redis,
+            create=True,
+        )
+        redis_patch.start()
+        self.addCleanup(redis_patch.stop)
+
+    def request(self, command, confirmation_token=None, database=None, include_database=False):
+        payload = {'id': self.connection.id, 'command': command}
+        if confirmation_token is not None:
+            payload['confirmation_token'] = confirmation_token
+        if include_database:
+            payload['database'] = database
+        request = RequestFactory().post(
+            '/api/database/execute/',
+            data=json.dumps(payload),
+            content_type='application/json',
+        )
+        request.user = self.user
+        return request
+
+    @patch('apps.database.views.execute')
+    @patch('apps.database.views.DatabaseConnection.objects.filter')
+    def test_production_data_change_returns_challenge_without_executing(
+            self, connections, execute_command):
+        connections.return_value.first.return_value = self.connection
+
+        response = run_command(self.request('UPDATE users SET active = 1'))
+
+        payload = json.loads(response.content)
+        self.assertFalse(payload['error'])
+        self.assertIs(payload['data']['requires_confirmation'], True)
+        self.assertTrue(payload['data']['confirmation_token'])
+        self.assertEqual(payload['data']['statement_types'], ['UPDATE'])
+        self.assertEqual(payload['data']['execution_database'], 'operations')
+        execute_command.assert_not_called()
+
+    @patch('apps.database.views.execute')
+    @patch('apps.database.views.DatabaseConnection.objects.filter')
+    def test_production_challenge_reports_driver_default_database(
+            self, connections, execute_command):
+        cases = (
+            ('postgresql', '', 'UPDATE users SET active = 1', 'postgres'),
+            ('clickhouse', '', 'INSERT INTO events VALUES (1)', 'default'),
+            ('redis', '', 'SET key value', '0'),
+        )
+        for database_type, database, command, expected in cases:
+            with self.subTest(database_type=database_type):
+                self.connection.type = database_type
+                self.connection.database = database
+                connections.return_value.first.return_value = self.connection
+
+                payload = json.loads(run_command(self.request(command)).content)
+
+                self.assertFalse(payload['error'])
+                self.assertEqual(payload['data']['execution_database'], expected)
+        execute_command.assert_not_called()
+
+    @patch('apps.database.views.execute', return_value={'rows': [], 'affected': 1})
+    @patch('apps.database.views.DatabaseConnection.objects.filter')
+    def test_matching_confirmation_token_executes_command(self, connections, execute_command):
+        connections.return_value.first.return_value = self.connection
+        command = 'DELETE FROM users WHERE id = 3'
+        challenge = json.loads(run_command(self.request(command)).content)['data']
+
+        response = run_command(
+            self.request(command, challenge['confirmation_token']))
+
+        payload = json.loads(response.content)
+        self.assertFalse(payload['error'])
+        self.assertEqual(payload['data'], {'rows': [], 'affected': 1})
+        execute_command.assert_called_once_with(self.connection, command, database=None, registry=ANY)
+
+    @patch('apps.database.views.execute', return_value={'rows': [], 'affected': 1})
+    @patch('apps.database.views.DatabaseConnection.objects.filter')
+    def test_matching_confirmation_token_cannot_execute_twice(
+            self, connections, execute_command):
+        connections.return_value.first.return_value = self.connection
+        command = 'DELETE FROM users WHERE id = 3'
+        challenge = json.loads(run_command(self.request(command)).content)['data']
+
+        first = run_command(self.request(command, challenge['confirmation_token']))
+        replay = run_command(self.request(command, challenge['confirmation_token']))
+
+        self.assertFalse(json.loads(first.content)['error'])
+        self.assertEqual(
+            json.loads(replay.content)['error'],
+            '确认令牌无效或已过期',
+        )
+        execute_command.assert_called_once_with(self.connection, command, database=None, registry=ANY)
+
+    @patch('apps.database.views.execute', return_value={'rows': [], 'affected': 0})
+    @patch('apps.database.views.DatabaseConnection.objects.filter')
+    def test_production_known_ddl_executes_without_confirmation(
+            self, connections, execute_command):
+        connections.return_value.first.return_value = self.connection
+        command = 'CREATE TABLE audit_log (id INT)'
+
+        response = run_command(self.request(command))
+
+        self.assertFalse(json.loads(response.content)['error'])
+        execute_command.assert_called_once_with(self.connection, command, database=None, registry=ANY)
+
+    @patch('apps.database.views.execute', return_value={'rows': [], 'affected': 0})
+    @patch('apps.database.views.DatabaseConnection.objects.filter')
+    def test_mysql_request_database_overrides_without_mutating_connection(
+            self, connections, execute_command):
+        self.connection.environment = 'normal'
+        connections.return_value.first.return_value = self.connection
+
+        response = run_command(self.request(
+            'SELECT * FROM users', database='analytics', include_database=True))
+
+        payload = json.loads(response.content)
+        self.assertFalse(payload['error'])
+        execute_command.assert_called_once_with(
+            self.connection, 'SELECT * FROM users', database='analytics', registry=ANY)
+        self.assertEqual(self.connection.database, 'operations')
+
+    @patch('apps.database.views.execute', return_value={'rows': [], 'affected': 0})
+    @patch('apps.database.views.DatabaseConnection.objects.filter')
+    def test_non_mysql_request_database_does_not_override_connection(
+            self, connections, execute_command):
+        for database_type in ('postgresql', 'clickhouse'):
+            with self.subTest(database_type=database_type):
+                self.connection.type = database_type
+                self.connection.database = ''
+                self.connection.environment = 'normal'
+                connections.return_value.first.return_value = self.connection
+
+                response = run_command(self.request(
+                    'SELECT * FROM users', database='', include_database=True))
+
+                payload = json.loads(response.content)
+                self.assertFalse(payload['error'])
+                execute_command.assert_called_once_with(
+                    self.connection, 'SELECT * FROM users', database=None, registry=ANY)
+                execute_command.reset_mock()
+
+    @patch('apps.database.views.execute', return_value={})
+    @patch('apps.database.views.DatabaseConnection.objects.filter')
+    def test_request_database_rejects_blank_and_overlong_values(
+            self, connections, execute_command):
+        connections.return_value.first.return_value = self.connection
+
+        for database in ('   ', 'a' * 129):
+            with self.subTest(database=database):
+                response = run_command(self.request(
+                    'SELECT 1', database=database, include_database=True))
+                payload = json.loads(response.content)
+                self.assertEqual(payload['error'], '数据库名称必须为 1～128 个非空白字符')
+        execute_command.assert_not_called()
+
+    @patch('apps.database.views.execute')
+    @patch('apps.database.views.DatabaseConnection.objects.filter')
+    def test_confirmation_token_cannot_be_replayed_for_another_database(
+            self, connections, execute_command):
+        connections.return_value.first.return_value = self.connection
+        command = 'DELETE FROM users WHERE id = 3'
+        challenge = json.loads(run_command(self.request(
+            command, database='analytics', include_database=True)).content)['data']
+
+        response = run_command(self.request(
+            command,
+            challenge['confirmation_token'],
+            database='archive',
+            include_database=True,
+        ))
+
+        payload = json.loads(response.content)
+        self.assertEqual(payload['error'], '确认令牌无效或已过期')
+        execute_command.assert_not_called()
+
+    @patch('apps.database.views.execute', return_value={'rows': [], 'affected': 1})
+    @patch('apps.database.views.DatabaseConnection.objects.filter')
+    def test_confirmation_token_executes_in_same_request_database(
+            self, connections, execute_command):
+        connections.return_value.first.return_value = self.connection
+        command = 'DELETE FROM users WHERE id = 3'
+        challenge = json.loads(run_command(self.request(
+            command, database='analytics', include_database=True)).content)['data']
+
+        response = run_command(self.request(
+            command,
+            challenge['confirmation_token'],
+            database='analytics',
+            include_database=True,
+        ))
+
+        payload = json.loads(response.content)
+        self.assertFalse(payload['error'])
+        self.assertEqual(payload['data'], {'rows': [], 'affected': 1})
+        execute_command.assert_called_once_with(
+            self.connection, command, database='analytics', registry=ANY)
+
+    @patch('apps.database.views.execute')
+    @patch('apps.database.views.DatabaseConnection.objects.filter')
+    def test_mismatched_confirmation_token_is_rejected_without_executing(
+            self, connections, execute_command):
+        connections.return_value.first.return_value = self.connection
+        original = 'UPDATE users SET active = 1'
+        challenge = json.loads(run_command(self.request(original)).content)['data']
+
+        response = run_command(self.request(
+            'UPDATE users SET active = 0', challenge['confirmation_token']))
+
+        payload = json.loads(response.content)
+        self.assertEqual(payload['error'], '确认令牌无效或已过期')
+        execute_command.assert_not_called()
+
+    @patch('apps.database.views.execute')
+    @patch('apps.database.views.DatabaseConnection.objects.filter')
+    def test_read_only_violation_is_rejected_without_executing(
+            self, connections, execute_command):
+        self.connection.read_only = True
+        connections.return_value.first.return_value = self.connection
+
+        response = run_command(self.request('DROP TABLE users'))
+
+        payload = json.loads(response.content)
+        self.assertIn('只读连接', payload['error'])
+        execute_command.assert_not_called()
+
+    @patch('apps.database.views.execute', return_value={})
+    @patch('apps.database.views.DatabaseConnection.objects.filter')
+    def test_production_unknown_redis_command_returns_challenge_without_executing(
+            self, connections, execute_command):
+        self.connection.type = 'redis'
+        connections.return_value.first.return_value = self.connection
+
+        response = run_command(self.request('JSON.SET profile $ {}'))
+
+        payload = json.loads(response.content)
+        self.assertFalse(payload['error'])
+        self.assertIn('requires_confirmation', payload['data'])
+        self.assertIs(payload['data']['requires_confirmation'], True)
+        execute_command.assert_not_called()
+
+    @patch('apps.database.views.execute', return_value={})
+    @patch('apps.database.views.DatabaseConnection.objects.filter')
+    def test_copy_to_program_is_rejected_without_executing(
+            self, connections, execute_command):
+        self.connection.type = 'postgresql'
+        self.connection.environment = 'normal'
+        connections.return_value.first.return_value = self.connection
+
+        response = run_command(
+            self.request("COPY users TO PROGRAM 'gzip > /tmp/users.gz'"))
+
+        payload = json.loads(response.content)
+        self.assertIn('COPY TO PROGRAM', payload['error'])
+        execute_command.assert_not_called()

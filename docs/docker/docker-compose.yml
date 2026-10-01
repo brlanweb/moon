@@ -1,38 +1,38 @@
-version: "3.3"
 services:
   db:
     image: mariadb:10.8
-    container_name: spug-db
+    container_name: moon-db
     restart: always
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
     volumes:
-      - /data/spug/mysql:/var/lib/mysql
+      - /data/moon/mysql:/var/lib/mysql
     environment:
-      - MYSQL_DATABASE=spug
-      - MYSQL_USER=spug
-      - MYSQL_PASSWORD=spug.cc
-      - MYSQL_ROOT_PASSWORD=spug.cc
-  spug:
-    image: openspug/spug-service
-    container_name: spug
+      - MYSQL_DATABASE=moon
+      - MYSQL_USER=moon
+      - MYSQL_PASSWORD=moon.cc
+      - MYSQL_ROOT_PASSWORD=moon.cc
+  moon:
+    # 使用仓库根目录的 Dockerfile.local 或 docs/docker/Dockerfile 自行构建
+    image: moon-service:latest
+    container_name: moon
     privileged: true
     restart: always
     volumes:
-      - /data/spug/service:/data/spug
-      - /data/spug/repos:/data/repos
+      - /data/moon/service:/data/moon
+      - /data/moon/repos:/data/repos
     ports:
       # 如果80端口被占用可替换为其他端口，例如: - "8000:80"
       - "80:80"
     environment:
-      # 代码版本，容器首次启动时按此值拉取代码并下载对应的前端产物
-      # (https://cdn.spug.cc/spug/web_${SPUG_DOCKER_VERSION}.tar.gz)。
-      # 注意：镜像内预装的 Python 依赖与该版本必须匹配，当前镜像按 4.0 的
-      # requirements.txt 构建（Django 4.2 / channels 4），不能用于 3.x 代码。
-      - SPUG_DOCKER_VERSION=v3.2.4
-      - MYSQL_DATABASE=spug
-      - MYSQL_USER=spug
-      - MYSQL_PASSWORD=spug.cc
-      - MYSQL_HOST=db
-      - MYSQL_PORT=3306
+      # 首次启动时按此分支/标签从 MOON_REPO_URL 拉取代码
+      - MOON_DOCKER_VERSION=4.0
+      - MOON_REPO_URL=https://github.com/brlanweb/moon.git
+      - MOON_SECRET_KEY=请替换为随机字符串
+      - MOON_DB_ENGINE=django.db.backends.mysql
+      - MOON_DB_NAME=moon
+      - MOON_DB_USER=moon
+      - MOON_DB_PASSWORD=moon.cc
+      - MOON_DB_HOST=db
+      - MOON_DB_PORT=3306
     depends_on:
       - db

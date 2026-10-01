@@ -1,0 +1,78 @@
+from django.db import models
+from libs import ModelMixin, human_datetime
+from apps.account.models import User
+import json
+
+# AI 前置任务的轮次上限与默认值：{模式: (上限, 默认值)}
+# 新引擎一轮可并行调用多个工具，上下文按字符预算裁剪，轮次不再是主要约束。
+# 诊断只读，可放宽；修复会变更服务器且无人值守，上限相对保守。
+AI_LOOP_LIMITS = {
+    'diagnose': (60, 15),
+    'repair': (50, 20),
+}
+
+
+class Detection(models.Model, ModelMixin):
+    TYPES = (
+        ('1', '站点检测'),
+        ('2', '端口检测'),
+        ('3', '进程检测'),
+        ('4', '自定义脚本'),
+        ('5', 'Ping检测'),
+        ('6', 'Docker服务检测'),
+        ('7', '资源监控'),
+    )
+    STATUS = (
+        (0, '正常'),
+        (1, '异常'),
+    )
+    AI_MODES = (
+        ('', '不启用'),
+        ('diagnose', 'AI诊断'),
+        ('repair', 'AI修复'),
+    )
+    name = models.CharField(max_length=50)
+    type = models.CharField(max_length=2, choices=TYPES)
+    group = models.CharField(max_length=255, null=True)
+    targets = models.TextField()
+    extra = models.TextField(null=True)
+    desc = models.CharField(max_length=255, null=True)
+    is_active = models.BooleanField(default=True)
+    rate = models.IntegerField(default=5)
+    threshold = models.IntegerField(default=3)
+    quiet = models.IntegerField(default=24 * 60)
+    fault_times = models.SmallIntegerField(default=0)
+    notify_mode = models.CharField(max_length=255)
+    notify_grp = models.CharField(max_length=255)
+    latest_run_time = models.CharField(max_length=20, null=True)
+
+    # AI 前置任务：告警触发后先由智能体诊断/修复，并以其结果替代原始告警
+    ai_mode = models.CharField(max_length=20, choices=AI_MODES, default='')
+    ai_host = models.ForeignKey('host.Host', models.SET_NULL, null=True, related_name='+')
+    ai_max_loops = models.IntegerField(default=3)
+
+    created_at = models.CharField(max_length=20, default=human_datetime)
+    created_by = models.ForeignKey(User, models.PROTECT, related_name='+')
+    updated_at = models.CharField(max_length=20, null=True)
+    updated_by = models.ForeignKey(User, models.PROTECT, related_name='+', null=True)
+
+    def to_view(self):
+        tmp = self.to_dict()
+        tmp['type_alias'] = self.get_type_display()
+        tmp['notify_mode'] = json.loads(self.notify_mode)
+        tmp['notify_grp'] = json.loads(self.notify_grp)
+        tmp['targets'] = json.loads(self.targets)
+        if self.type in ('6', '7') and isinstance(self.extra, str):
+            try:
+                tmp['extra'] = json.loads(self.extra)
+            except (TypeError, ValueError):
+                tmp['extra'] = None
+        tmp['ai_host_name'] = self.ai_host.name if self.ai_host else None
+        return tmp
+
+    def __repr__(self):
+        return '<Detection %r>' % self.name
+
+    class Meta:
+        db_table = 'detections'
+        ordering = ('-id',)

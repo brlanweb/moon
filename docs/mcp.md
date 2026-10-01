@@ -82,7 +82,7 @@ system.mcp.use   通过令牌调用 MCP 工具
 安装项目依赖并应用迁移：
 
 ```bash
-cd /data/spug/spug_api
+cd /data/moon/moon_api
 ./venv/bin/pip install -r requirements.txt
 ./venv/bin/python manage.py migrate
 ```
@@ -95,19 +95,19 @@ MOON_MCP_ISSUER_URL=https://moon.example.com \
 sh tools/start-mcp.sh
 ```
 
-Supervisor 配置启动 `spug-mcp`（本机 `127.0.0.1:9003`），Nginx 的 `/mcp` 将请求代理到该进程，并覆盖 `X-Moon-Client-IP` 为实际代理对端地址。`/mcp/files/` 需关闭请求缓冲（`proxy_request_buffering off`）并放开请求体大小（`client_max_body_size 0`），示例配置见 `docs/docker/nginx.conf`。生产环境必须设置上面的公开 HTTPS URL，且反向代理只应信任自身写入的客户端 IP 头。
+Supervisor 配置启动 `moon-mcp`（本机 `127.0.0.1:9003`），Nginx 的 `/mcp` 将请求代理到该进程，并覆盖 `X-Moon-Client-IP` 为实际代理对端地址。`/mcp/files/` 需关闭请求缓冲（`proxy_request_buffering off`）并放开请求体大小（`client_max_body_size 0`），示例配置见 `docs/docker/nginx.conf`。生产环境必须设置上面的公开 HTTPS URL，且反向代理只应信任自身写入的客户端 IP 头。
 
 ## 验证
 
 后端隔离测试使用内存 SQLite、LocMemCache、内存 Channel Layer：
 
 ```bash
-SPUG_DEBUG=true DJANGO_SETTINGS_MODULE=apps.mcp_ops.test_settings \
+MOON_DEBUG=true DJANGO_SETTINGS_MODULE=apps.mcp_ops.test_settings \
   ./venv/bin/python manage.py test apps.mcp_ops.tests apps.mcp_ops.test_security_contract apps.mcp_ops.test_files -v 2
 ```
 
 真实 HTTP 联调会创建临时 SQLite 数据库、启动临时 Uvicorn，使用官方 `mcp.Client` 完成初始化、`tools/list` 和 `tools/call`；不连接真实 SSH 主机：
 
 ```bash
-SPUG_DEBUG=true ./venv/bin/python -m apps.mcp_ops.test_http_integration
+MOON_DEBUG=true ./venv/bin/python -m apps.mcp_ops.test_http_integration
 ```

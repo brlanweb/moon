@@ -2,9 +2,9 @@
 
 [简体中文](./README-zh_CN.md) | English
 
-![Moon](./spug_web/public/logo.png)
+![Moon](./moon_web/public/logo.png)
 
-Moon is an operations console for managing registered servers, containers, deployments and monitoring. It extends the OpenSpug codebase with AI-assisted operations, resource monitoring and a consistent Moon interface.
+Moon is an operations console for managing registered servers, containers, deployments and monitoring. It provides AI-assisted operations, resource monitoring and a consistent Moon interface.
 
 ## Features
 
@@ -20,17 +20,17 @@ LDAP and the external Push Assistant integration have been retired. The old push
 
 ## Local Development
 
-Use Node.js 22, the project's Python environment (tested with Python 3.10/3.12), and Docker Compose. Internal package names and existing database identifiers are retained for compatibility.
+Use Node.js 22, the project's Python environment (tested with Python 3.10/3.12), and Docker Compose.
 
 ```sh
 git clone https://github.com/brlanweb/moon.git
 cd moon
-cd spug_web
+cd moon_web
 npm ci
 npm run build
 cd ..
 docker compose -f docker-compose.local.yml up -d --build
-docker compose -f docker-compose.local.yml exec spug python3 /data/spug/spug_api/manage.py migrate
+docker compose -f docker-compose.local.yml exec moon python3 /data/moon/moon_api/manage.py migrate
 ```
 
 Open http://127.0.0.1:8000. The local Compose file contains development-only defaults and must not be exposed as a production deployment. Configure secrets, access restrictions and backups separately for production. Back up the database before applying retirement migrations; removed credentials cannot be recovered by reversing the schema alone.
@@ -46,7 +46,4 @@ Only currently authorized registered hosts can be targeted. Token plaintext is s
 ## Source and License
 
 - Moon source: https://github.com/brlanweb/moon
-- Upstream project: https://github.com/openspug/spug
-- License: GNU Affero General Public License v3.0, as retained in this repository.
-
-Copyright notices from OpenSpug and other upstream contributors are preserved. Moon is a separately maintained derivative, not an official OpenSpug release. The repository retains its Git history and the technical identifiers needed by existing installations.
+- License: GNU Affero General Public License v3.0, see [LICENSE](./LICENSE).

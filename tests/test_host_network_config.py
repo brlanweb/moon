@@ -12,7 +12,7 @@ NGINX = Path(os.environ.get("NGINX_FILE", ROOT / "docs/docker/nginx-host.conf"))
 SUPERVISOR = Path(os.environ.get(
     "SUPERVISOR_FILE", ROOT / "docs/docker/supervisor-host.conf"
 ))
-SETTINGS = Path(os.environ.get("SETTINGS_FILE", ROOT / "spug_api/spug/settings.py"))
+SETTINGS = Path(os.environ.get("SETTINGS_FILE", ROOT / "moon_api/moon/settings.py"))
 
 
 def active_directives(path: Path, directive: str) -> list[str]:
@@ -27,13 +27,13 @@ def active_directives(path: Path, directive: str) -> list[str]:
 def compose_service() -> dict:
     env = os.environ.copy()
     env.update({
-        "SPUG_SECRET_KEY": "test",
-        "SPUG_DB_ENGINE": "django.db.backends.postgresql",
-        "SPUG_DB_NAME": "spug",
-        "SPUG_DB_USER": "spug",
-        "SPUG_DB_PASSWORD": "test",
-        "SPUG_DB_HOST": "127.0.0.1",
-        "SPUG_DB_PORT": "5432",
+        "MOON_SECRET_KEY": "test",
+        "MOON_DB_ENGINE": "django.db.backends.postgresql",
+        "MOON_DB_NAME": "moon",
+        "MOON_DB_USER": "moon",
+        "MOON_DB_PASSWORD": "test",
+        "MOON_DB_HOST": "127.0.0.1",
+        "MOON_DB_PORT": "5432",
     })
     result = subprocess.run(
         ["docker", "compose", "-f", str(COMPOSE), "config", "--format", "json"],
@@ -42,7 +42,7 @@ def compose_service() -> dict:
         text=True,
         env=env,
     )
-    return json.loads(result.stdout)["services"]["spug"]
+    return json.loads(result.stdout)["services"]["moon"]
 
 
 def assignment(tree: ast.AST, name: str) -> ast.AST:
@@ -77,7 +77,7 @@ def main() -> None:
     service = compose_service()
     assert service.get("network_mode") == "host"
     assert not service.get("ports")
-    assert "SPUG_REDIS_PORT" not in service["environment"]
+    assert "MOON_REDIS_PORT" not in service["environment"]
     assert "host.docker.internal=host-gateway" in service.get("extra_hosts", [])
 
     mounted_sources = {
@@ -85,7 +85,7 @@ def main() -> None:
     }
     assert mounted_sources.get("nginx-host.conf") == "/etc/nginx/nginx.conf"
     assert "nginx.conf" not in mounted_sources
-    assert mounted_sources.get("supervisor-host.conf") == "/etc/supervisor/conf.d/spug.conf"
+    assert mounted_sources.get("supervisor-host.conf") == "/etc/supervisor/conf.d/moon.conf"
     assert "redis-host.conf" not in mounted_sources
 
     assert active_directives(NGINX, "listen") == [
@@ -101,21 +101,21 @@ def main() -> None:
     assert "program:redis" not in supervisor.sections()
     assert {
         "program:nginx",
-        "program:spug-api",
-        "program:spug-ws",
-        "program:spug-worker",
-        "program:spug-monitor",
-        "program:spug-scheduler",
+        "program:moon-api",
+        "program:moon-ws",
+        "program:moon-worker",
+        "program:moon-monitor",
+        "program:moon-scheduler",
     }.issubset(supervisor.sections())
 
     settings_tree = ast.parse(SETTINGS.read_text())
     assert same_expression(
         assignment(settings_tree, "_REDIS_HOST"),
-        "os.environ.get('SPUG_REDIS_HOST', '127.0.0.1')",
+        "os.environ.get('MOON_REDIS_HOST', '127.0.0.1')",
     )
     assert same_expression(
         assignment(settings_tree, "_REDIS_PORT"),
-        "int(os.environ.get('SPUG_REDIS_PORT', '6379'))",
+        "int(os.environ.get('MOON_REDIS_PORT', '6379'))",
     )
 
     locations = keyed_values(assignment(settings_tree, "CACHES"), "LOCATION")

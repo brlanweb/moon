@@ -2,9 +2,9 @@
 
 简体中文 | [English](./README.md)
 
-![Moon](./spug_web/public/logo.png)
+![Moon](./moon_web/public/logo.png)
 
-Moon 是面向已登记服务器的运维控制台，在 OpenSpug 基础上扩展了智能体运维、容器管理和资源监控，并统一使用 Moon 品牌与界面风格。
+Moon 是面向已登记服务器的运维控制台，提供智能体运维、容器管理和资源监控，并统一使用 Moon 品牌与界面风格。
 
 ## 功能
 
@@ -20,17 +20,17 @@ LDAP 和外部推送助手集成已下线。原依赖推送助手的 MFA 验证�
 
 ## 本地运行
 
-使用 Node.js 22、项目 Python 环境（已在 Python 3.10/3.12 验证）及 Docker Compose。内部包名、数据库标识和兼容配置保留，避免破坏现有安装。
+使用 Node.js 22、项目 Python 环境（已在 Python 3.10/3.12 验证）及 Docker Compose。
 
 ```sh
 git clone https://github.com/brlanweb/moon.git
 cd moon
-cd spug_web
+cd moon_web
 npm ci
 npm run build
 cd ..
 docker compose -f docker-compose.local.yml up -d --build
-docker compose -f docker-compose.local.yml exec spug python3 /data/spug/spug_api/manage.py migrate
+docker compose -f docker-compose.local.yml exec moon python3 /data/moon/moon_api/manage.py migrate
 ```
 
 访问 http://127.0.0.1:8000。本地 Compose 使用仅供开发的默认配置，不可直接作为公网生产部署；生产环境必须单独配置凭据、访问限制及备份。
@@ -46,7 +46,4 @@ docker compose -f docker-compose.local.yml exec spug python3 /data/spug/spug_api
 ## 源码与许可
 
 - Moon 仓库：https://github.com/brlanweb/moon
-- 上游项目：https://github.com/openspug/spug
-- 许可证：GNU Affero General Public License v3.0，详见仓库保留的许可证文件。
-
-保留 OpenSpug 及其他上游贡献者的版权声明。Moon 为独立维护的衍生项目，不代表 OpenSpug 官方发行版。Git 历史以及现有安装所需的技术标识均予以保留。
+- 许可证：GNU Affero General Public License v3.0，详见 [LICENSE](./LICENSE)。

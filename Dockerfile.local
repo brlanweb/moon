@@ -1,4 +1,7 @@
-FROM openspug/spug-service:latest
+# 第三方运行时基础镜像（提供 Python/nginx/redis/supervisor），仅复用其运行环境，
+# 其内置的旧代码包、入口脚本与 Supervisor/nginx 配置均在下方移除或覆盖。
+ARG MOON_BASE_IMAGE=openspug/spug-service:latest
+FROM ${MOON_BASE_IMAGE}
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends docker.io \
@@ -7,7 +10,7 @@ RUN apt-get update \
 # Retire the LDAP client inherited from the upstream service image.
 RUN pip3 uninstall -y python-ldap
 
-# 版本与 spug_api/requirements.txt 保持一致。
+# 版本与 moon_api/requirements.txt 保持一致。
 # Django 4.2 起才支持 psycopg 3（PostgreSQL 需要），且要求 channels/daphne 4.x。
 RUN pip3 install --no-cache-dir \
     'Django>=4.2.0,<4.3.0' \
@@ -24,4 +27,11 @@ RUN pip3 install --no-cache-dir \
     'sqlparse>=0.5.3,<0.7.0' \
     'mcp==2.2.0'
 
+# 移除基础镜像内置的旧进程定义与代码包，避免与 moon.conf 重复定义 nginx/redis 等进程。
+RUN rm -f /etc/supervisor/conf.d/*.conf /spug.tar.xz
+
+COPY docs/docker/entrypoint-local.sh /entrypoint.sh
+COPY docs/docker/nginx.conf /etc/nginx/nginx.conf
+COPY docs/docker/supervisor-container.conf /etc/supervisor/conf.d/moon.conf
 COPY docs/docker/mcp-supervisor.conf /etc/supervisor/conf.d/moon-mcp.conf
+RUN chmod +x /entrypoint.sh

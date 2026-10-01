@@ -1,0 +1,47 @@
+from django.db import models
+from apps.account.models import User
+from libs import ModelMixin
+import json
+
+KEYS_DEFAULT = {
+    'verify_ip': True,
+    'bind_ip': True,
+    'api_key': None,
+    'mail_service': {},
+    'private_key': None,
+    'public_key': None,
+}
+
+
+class Setting(models.Model, ModelMixin):
+    key = models.CharField(max_length=50, unique=True)
+    value = models.TextField()
+    desc = models.CharField(max_length=255, null=True)
+
+    def to_view(self):
+        tmp = self.to_dict(selects=('key',))
+        tmp['value'] = self.real_val
+        return tmp
+
+    @property
+    def real_val(self):
+        if self.value:
+            return json.loads(self.value)
+        else:
+            return KEYS_DEFAULT.get(self.key)
+
+    def __repr__(self):
+        return '<Setting %r>' % self.key
+
+    class Meta:
+        db_table = 'settings'
+
+
+class UserSetting(models.Model, ModelMixin):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    key = models.CharField(max_length=32)
+    value = models.TextField()
+
+    class Meta:
+        db_table = 'user_settings'
+        unique_together = ('user', 'key')

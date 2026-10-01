@@ -1,0 +1,26 @@
+const proxy = require('http-proxy-middleware');
+
+module.exports = function (app) {
+  app.use(proxy('/api/', {
+    target: 'http://127.0.0.1:8000',
+    changeOrigin: true,
+    ws: true,
+    headers: {'X-Real-IP': '1.1.1.1'},
+    // Port 8000 is the container's Nginx gateway; it strips /api itself.
+    // 添加错误处理
+    onError: (err, req, res) => {
+      console.log('Proxy error:', err.message);
+      if (!res.headersSent && typeof res.writeHead === 'function') {
+        res.writeHead(500, {
+          'Content-Type': 'application/json',
+        });
+        res.end(JSON.stringify({ error: 'Proxy error' }));
+      } else if (typeof res.destroy === 'function') {
+        res.destroy();
+      }
+    },
+    // 添加连接配置
+    timeout: 30000,
+    proxyTimeout: 30000
+  }))
+};

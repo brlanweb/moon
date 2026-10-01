@@ -1,0 +1,21 @@
+import React, { Component } from 'react';
+import {Switch, Route} from 'react-router-dom';
+import Login from './pages/login';
+import WebSSH from './pages/ssh';
+import DatabaseConsole from './pages/database';
+import Layout from './layout';
+
+class App extends Component {
+  render() {
+    return (
+      <Switch>
+        <Route path="/" exact component={Login} />
+        <Route path="/ssh" exact component={WebSSH} />
+        <Route path="/db" exact component={DatabaseConsole} />
+        <Route component={Layout} />
+      </Switch>
+    );
+  }
+}
+
+export default App;
